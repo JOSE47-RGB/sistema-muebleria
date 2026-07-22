@@ -10,12 +10,15 @@ export default defineConfig({
 
   server: {
     host: "0.0.0.0",
-    port: 5173,
+    allowedHosts: [
+      "exemplary-exploration-production-a7e5.up.railway.app",
+    ],
   },
 
   preview: {
     host: "0.0.0.0",
-    port: Number(process.env.PORT) || 4173,
-    allowedHosts: true,
+    allowedHosts: [
+      "exemplary-exploration-production-a7e5.up.railway.app",
+    ],
   },
 });
