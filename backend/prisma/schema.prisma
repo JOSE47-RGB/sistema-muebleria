@@ -1,0 +1,1205 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model acciones_sistema {
+  id_accion      BigInt           @id @default(autoincrement()) @db.UnsignedBigInt
+  codigo         String           @unique(map: "codigo") @db.VarChar(100)
+  nombre         String           @db.VarChar(100)
+  descripcion    String?          @db.VarChar(255)
+  estado         Int              @default(1) @db.TinyInt
+  permiso_accion permiso_accion[]
+  permisos       permisos[]
+
+  @@index([codigo], map: "idx_acciones_codigo")
+}
+
+model apartado_detalle {
+  id_apartado_detalle BigInt             @id @default(autoincrement()) @db.UnsignedBigInt
+  id_apartado         BigInt             @db.UnsignedBigInt
+  id_variante         BigInt             @db.UnsignedBigInt
+  cantidad            Int
+  precio_unitario     Decimal            @db.Decimal(12, 2)
+  descuento           Decimal            @default(0.00) @db.Decimal(12, 2)
+  subtotal            Decimal            @db.Decimal(12, 2)
+  apartados           apartados          @relation(fields: [id_apartado], references: [id_apartado], onUpdate: Restrict, map: "apartado_detalle_ibfk_1")
+  producto_variantes  producto_variantes @relation(fields: [id_variante], references: [id_variante], onUpdate: Restrict, map: "apartado_detalle_ibfk_2")
+
+  @@index([id_apartado], map: "id_apartado")
+  @@index([id_variante], map: "id_variante")
+}
+
+model apartados {
+  id_apartado      BigInt             @id @default(autoincrement()) @db.UnsignedBigInt
+  codigo_apartado  String             @unique(map: "codigo_apartado") @db.VarChar(50)
+  id_cliente       BigInt             @db.UnsignedBigInt
+  id_sucursal      BigInt             @db.UnsignedBigInt
+  id_usuario       BigInt             @db.UnsignedBigInt
+  id_turno         BigInt             @db.UnsignedBigInt
+  id_estado        BigInt             @db.UnsignedBigInt
+  fecha_apartado   DateTime           @default(now()) @db.DateTime(0)
+  total            Decimal            @db.Decimal(12, 2)
+  enganche         Decimal            @default(0.00) @db.Decimal(12, 2)
+  saldo_pendiente  Decimal            @db.Decimal(12, 2)
+  fecha_limite     DateTime?          @db.Date
+  observaciones    String?            @db.VarChar(255)
+  apartado_detalle apartado_detalle[]
+  clientes         clientes           @relation(fields: [id_cliente], references: [id_cliente], onUpdate: Restrict, map: "apartados_ibfk_1")
+  sucursales       sucursales         @relation(fields: [id_sucursal], references: [id_sucursal], onUpdate: Restrict, map: "apartados_ibfk_2")
+  usuarios         usuarios           @relation(fields: [id_usuario], references: [id_usuario], onUpdate: Restrict, map: "apartados_ibfk_3")
+  caja_turnos      caja_turnos        @relation(fields: [id_turno], references: [id_turno], onUpdate: Restrict, map: "apartados_ibfk_4")
+  estados_sistema  estados_sistema    @relation(fields: [id_estado], references: [id_estado], onUpdate: Restrict, map: "apartados_ibfk_5")
+  pagos            pagos[]
+
+  @@index([id_sucursal], map: "id_sucursal")
+  @@index([id_turno], map: "id_turno")
+  @@index([id_usuario], map: "id_usuario")
+  @@index([id_cliente], map: "idx_apartados_cliente")
+  @@index([id_estado], map: "idx_apartados_estado")
+  @@index([fecha_apartado], map: "idx_apartados_fecha")
+}
+
+model auditoria_accesos {
+  id_acceso     BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  id_usuario    BigInt?   @db.UnsignedBigInt
+  email_usuario String?   @db.VarChar(150)
+  evento        String    @db.VarChar(50)
+  ip            String?   @db.VarChar(45)
+  user_agent    String?   @db.VarChar(255)
+  motivo        String?   @db.VarChar(255)
+  fecha         DateTime  @default(now()) @db.DateTime(0)
+  usuarios      usuarios? @relation(fields: [id_usuario], references: [id_usuario], onDelete: Restrict, onUpdate: Restrict, map: "auditoria_accesos_ibfk_1")
+
+  @@index([fecha], map: "idx_auditoria_accesos_fecha")
+  @@index([id_usuario], map: "idx_auditoria_accesos_usuario")
+}
+
+model auditoria_anulaciones {
+  id_anulacion              BigInt                     @id @default(autoincrement()) @db.UnsignedBigInt
+  id_autorizacion           BigInt?                    @db.UnsignedBigInt
+  id_usuario                BigInt                     @db.UnsignedBigInt
+  tabla_afectada            String                     @db.VarChar(100)
+  id_registro_afectado      BigInt                     @db.UnsignedBigInt
+  codigo_referencia         String?                    @db.VarChar(100)
+  motivo                    String                     @db.Text
+  fecha                     DateTime                   @default(now()) @db.DateTime(0)
+  autorizaciones_especiales autorizaciones_especiales? @relation(fields: [id_autorizacion], references: [id_autorizacion], onDelete: Restrict, onUpdate: Restrict, map: "auditoria_anulaciones_ibfk_1")
+  usuarios                  usuarios                   @relation(fields: [id_usuario], references: [id_usuario], onUpdate: Restrict, map: "auditoria_anulaciones_ibfk_2")
+
+  @@index([id_autorizacion], map: "id_autorizacion")
+  @@index([id_usuario], map: "id_usuario")
+  @@index([tabla_afectada, id_registro_afectado], map: "idx_anulaciones_tabla_registro")
+}
+
+model auditoria_cambios {
+  id_cambio         BigInt            @id @default(autoincrement()) @db.UnsignedBigInt
+  id_evento         BigInt            @db.UnsignedBigInt
+  campo             String            @db.VarChar(100)
+  valor_anterior    String?           @db.Text
+  valor_nuevo       String?           @db.Text
+  fecha             DateTime          @default(now()) @db.DateTime(0)
+  auditoria_eventos auditoria_eventos @relation(fields: [id_evento], references: [id_evento], onUpdate: Restrict, map: "auditoria_cambios_ibfk_1")
+
+  @@index([id_evento], map: "idx_auditoria_cambios_evento")
+}
+
+model auditoria_consultas {
+  id_consulta         BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  id_usuario          BigInt   @db.UnsignedBigInt
+  modulo              String   @db.VarChar(100)
+  accion              String   @db.VarChar(100)
+  filtros_usados      String?  @db.LongText
+  cantidad_resultados Int?     @default(0)
+  ip                  String?  @db.VarChar(45)
+  user_agent          String?  @db.VarChar(255)
+  fecha               DateTime @default(now()) @db.DateTime(0)
+  usuarios            usuarios @relation(fields: [id_usuario], references: [id_usuario], onUpdate: Restrict, map: "auditoria_consultas_ibfk_1")
+
+  @@index([id_usuario, fecha], map: "idx_auditoria_consultas_usuario_fecha")
+}
+
+model auditoria_documentos {
+  id_auditoria_documento BigInt     @id @default(autoincrement()) @db.UnsignedBigInt
+  id_documento           BigInt     @db.UnsignedBigInt
+  id_usuario             BigInt     @db.UnsignedBigInt
+  accion                 String     @db.VarChar(80)
+  motivo                 String?    @db.VarChar(255)
+  ip                     String?    @db.VarChar(45)
+  fecha                  DateTime   @default(now()) @db.DateTime(0)
+  documentos             documentos @relation(fields: [id_documento], references: [id_documento], onUpdate: Restrict, map: "auditoria_documentos_ibfk_1")
+  usuarios               usuarios   @relation(fields: [id_usuario], references: [id_usuario], onUpdate: Restrict, map: "auditoria_documentos_ibfk_2")
+
+  @@index([id_usuario], map: "id_usuario")
+  @@index([id_documento], map: "idx_auditoria_documentos_documento")
+}
+
+model auditoria_errores_sistema {
+  id_error     BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  id_usuario   BigInt?   @db.UnsignedBigInt
+  modulo       String?   @db.VarChar(100)
+  codigo_error String?   @db.VarChar(80)
+  mensaje      String    @db.Text
+  archivo      String?   @db.VarChar(255)
+  linea        Int?
+  ip           String?   @db.VarChar(45)
+  user_agent   String?   @db.VarChar(255)
+  fecha        DateTime  @default(now()) @db.DateTime(0)
+  usuarios     usuarios? @relation(fields: [id_usuario], references: [id_usuario], onDelete: Restrict, onUpdate: Restrict, map: "auditoria_errores_sistema_ibfk_1")
+
+  @@index([id_usuario], map: "id_usuario")
+}
+
+model auditoria_eventos {
+  id_evento              BigInt                 @id @default(autoincrement()) @db.UnsignedBigInt
+  id_tipo_evento         BigInt                 @db.UnsignedBigInt
+  id_usuario             BigInt?                @db.UnsignedBigInt
+  id_sesion              BigInt?                @db.UnsignedBigInt
+  tabla_afectada         String?                @db.VarChar(100)
+  id_registro_afectado   BigInt?                @db.UnsignedBigInt
+  accion                 String                 @db.VarChar(80)
+  descripcion            String?                @db.Text
+  ip                     String?                @db.VarChar(45)
+  user_agent             String?                @db.VarChar(255)
+  ruta                   String?                @db.VarChar(255)
+  metodo_http            String?                @db.VarChar(10)
+  origen                 String?                @default("SISTEMA") @db.VarChar(80)
+  fecha                  DateTime               @default(now()) @db.DateTime(0)
+  hash_evento            String?                @db.Char(64)
+  auditoria_cambios      auditoria_cambios[]
+  tipos_evento_auditoria tipos_evento_auditoria @relation(fields: [id_tipo_evento], references: [id_tipo_evento], onUpdate: Restrict, map: "auditoria_eventos_ibfk_1")
+  usuarios               usuarios?              @relation(fields: [id_usuario], references: [id_usuario], onDelete: Restrict, onUpdate: Restrict, map: "auditoria_eventos_ibfk_2")
+  sesiones_usuario       sesiones_usuario?      @relation(fields: [id_sesion], references: [id_sesion], onDelete: Restrict, onUpdate: Restrict, map: "auditoria_eventos_ibfk_3")
+  auditoria_integridad   auditoria_integridad[]
+  auditoria_snapshots    auditoria_snapshots[]
+
+  @@index([id_sesion], map: "id_sesion")
+  @@index([fecha], map: "idx_auditoria_eventos_fecha")
+  @@index([tabla_afectada, id_registro_afectado], map: "idx_auditoria_eventos_tabla_registro")
+  @@index([id_tipo_evento], map: "idx_auditoria_eventos_tipo")
+  @@index([id_usuario], map: "idx_auditoria_eventos_usuario")
+}
+
+model auditoria_integridad {
+  id_integridad     BigInt            @id @default(autoincrement()) @db.UnsignedBigInt
+  id_evento         BigInt            @db.UnsignedBigInt
+  hash_anterior     String?           @db.Char(64)
+  hash_actual       String            @db.Char(64)
+  fecha             DateTime          @default(now()) @db.DateTime(0)
+  auditoria_eventos auditoria_eventos @relation(fields: [id_evento], references: [id_evento], onUpdate: Restrict, map: "auditoria_integridad_ibfk_1")
+
+  @@index([id_evento], map: "id_evento")
+}
+
+model auditoria_respaldos_exportaciones {
+  id_registro        BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  id_usuario         BigInt   @db.UnsignedBigInt
+  tipo               String   @db.VarChar(80)
+  modulo             String?  @db.VarChar(100)
+  descripcion        String?  @db.VarChar(255)
+  nombre_archivo     String?  @db.VarChar(255)
+  cantidad_registros Int?     @default(0)
+  ip                 String?  @db.VarChar(45)
+  fecha              DateTime @default(now()) @db.DateTime(0)
+  usuarios           usuarios @relation(fields: [id_usuario], references: [id_usuario], onUpdate: Restrict, map: "auditoria_respaldos_exportaciones_ibfk_1")
+
+  @@index([id_usuario, fecha], map: "idx_exportaciones_usuario_fecha")
+}
+
+model auditoria_snapshots {
+  id_snapshot       BigInt            @id @default(autoincrement()) @db.UnsignedBigInt
+  id_evento         BigInt            @db.UnsignedBigInt
+  datos_anteriores  String?           @db.LongText
+  datos_nuevos      String?           @db.LongText
+  fecha             DateTime          @default(now()) @db.DateTime(0)
+  auditoria_eventos auditoria_eventos @relation(fields: [id_evento], references: [id_evento], onUpdate: Restrict, map: "auditoria_snapshots_ibfk_1")
+
+  @@index([id_evento], map: "id_evento")
+}
+
+model autorizaciones_especiales {
+  id_autorizacion                                                  BigInt                  @id @default(autoincrement()) @db.UnsignedBigInt
+  codigo_autorizacion                                              String                  @unique(map: "codigo_autorizacion") @db.VarChar(80)
+  id_usuario_solicita                                              BigInt                  @db.UnsignedBigInt
+  id_usuario_autoriza                                              BigInt?                 @db.UnsignedBigInt
+  modulo                                                           String                  @db.VarChar(100)
+  accion                                                           String                  @db.VarChar(100)
+  motivo                                                           String                  @db.Text
+  estado                                                           String                  @default("PENDIENTE") @db.VarChar(50)
+  fecha_solicitud                                                  DateTime                @default(now()) @db.DateTime(0)
+  fecha_respuesta                                                  DateTime?               @db.DateTime(0)
+  ip_solicitud                                                     String?                 @db.VarChar(45)
+  auditoria_anulaciones                                            auditoria_anulaciones[]
+  usuarios_autorizaciones_especiales_id_usuario_solicitaTousuarios usuarios                @relation("autorizaciones_especiales_id_usuario_solicitaTousuarios", fields: [id_usuario_solicita], references: [id_usuario], onUpdate: Restrict, map: "autorizaciones_especiales_ibfk_1")
+  usuarios_autorizaciones_especiales_id_usuario_autorizaTousuarios usuarios?               @relation("autorizaciones_especiales_id_usuario_autorizaTousuarios", fields: [id_usuario_autoriza], references: [id_usuario], onDelete: Restrict, onUpdate: Restrict, map: "autorizaciones_especiales_ibfk_2")
+
+  @@index([id_usuario_autoriza], map: "id_usuario_autoriza")
+  @@index([id_usuario_solicita], map: "id_usuario_solicita")
+  @@index([estado], map: "idx_autorizaciones_estado")
+}
+
+model bitacora_auditoria {
+  id_bitacora    BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  id_usuario     BigInt?   @db.UnsignedBigInt
+  tabla_afectada String    @db.VarChar(100)
+  accion         String    @db.VarChar(50)
+  descripcion    String?   @db.Text
+  ip             String?   @db.VarChar(45)
+  user_agent     String?   @db.VarChar(255)
+  fecha          DateTime  @default(now()) @db.DateTime(0)
+  usuarios       usuarios? @relation(fields: [id_usuario], references: [id_usuario], onDelete: Restrict, onUpdate: Restrict, map: "bitacora_auditoria_ibfk_1")
+
+  @@index([fecha], map: "idx_bitacora_fecha")
+  @@index([id_usuario], map: "idx_bitacora_usuario")
+}
+
+model caja_movimientos {
+  id_caja_movimiento      BigInt                @id @default(autoincrement()) @db.UnsignedBigInt
+  id_turno                BigInt                @db.UnsignedBigInt
+  id_tipo_movimiento_caja BigInt                @db.UnsignedBigInt
+  id_metodo_pago          BigInt                @db.UnsignedBigInt
+  monto                   Decimal               @db.Decimal(12, 2)
+  referencia              String?               @db.VarChar(100)
+  descripcion             String?               @db.VarChar(255)
+  fecha                   DateTime              @default(now()) @db.DateTime(0)
+  caja_turnos             caja_turnos           @relation(fields: [id_turno], references: [id_turno], onUpdate: Restrict, map: "caja_movimientos_ibfk_1")
+  tipos_movimiento_caja   tipos_movimiento_caja @relation(fields: [id_tipo_movimiento_caja], references: [id_tipo_movimiento_caja], onUpdate: Restrict, map: "caja_movimientos_ibfk_2")
+  metodos_pago            metodos_pago          @relation(fields: [id_metodo_pago], references: [id_metodo_pago], onUpdate: Restrict, map: "caja_movimientos_ibfk_3")
+
+  @@index([id_metodo_pago], map: "id_metodo_pago")
+  @@index([id_tipo_movimiento_caja], map: "id_tipo_movimiento_caja")
+  @@index([fecha], map: "idx_caja_movimientos_fecha")
+  @@index([id_turno], map: "idx_caja_movimientos_turno")
+}
+
+model caja_turnos {
+  id_turno         BigInt             @id @default(autoincrement()) @db.UnsignedBigInt
+  id_caja          BigInt             @db.UnsignedBigInt
+  id_usuario       BigInt             @db.UnsignedBigInt
+  id_estado        BigInt             @db.UnsignedBigInt
+  fecha_apertura   DateTime           @default(now()) @db.DateTime(0)
+  fecha_cierre     DateTime?          @db.DateTime(0)
+  monto_inicial    Decimal            @default(0.00) @db.Decimal(12, 2)
+  monto_esperado   Decimal            @default(0.00) @db.Decimal(12, 2)
+  monto_cierre     Decimal?           @db.Decimal(12, 2)
+  diferencia       Decimal?           @db.Decimal(12, 2)
+  observaciones    String?            @db.VarChar(255)
+  apartados        apartados[]
+  caja_movimientos caja_movimientos[]
+  cajas            cajas              @relation(fields: [id_caja], references: [id_caja], onUpdate: Restrict, map: "caja_turnos_ibfk_1")
+  usuarios         usuarios           @relation(fields: [id_usuario], references: [id_usuario], onUpdate: Restrict, map: "caja_turnos_ibfk_2")
+  estados_sistema  estados_sistema    @relation(fields: [id_estado], references: [id_estado], onUpdate: Restrict, map: "caja_turnos_ibfk_3")
+  pagos            pagos[]
+  ventas           ventas[]
+
+  @@index([id_caja], map: "id_caja")
+  @@index([id_estado], map: "idx_caja_turnos_estado")
+  @@index([fecha_apertura], map: "idx_caja_turnos_fecha")
+  @@index([id_usuario], map: "idx_caja_turnos_usuario")
+}
+
+model cajas {
+  id_caja     BigInt        @id @default(autoincrement()) @db.UnsignedBigInt
+  id_sucursal BigInt        @db.UnsignedBigInt
+  codigo_caja String        @unique(map: "codigo_caja") @db.VarChar(40)
+  nombre      String        @db.VarChar(100)
+  estado      Int           @default(1) @db.TinyInt
+  caja_turnos caja_turnos[]
+  sucursales  sucursales    @relation(fields: [id_sucursal], references: [id_sucursal], onUpdate: Restrict, map: "cajas_ibfk_1")
+
+  @@index([id_sucursal], map: "id_sucursal")
+}
+
+model categorias {
+  id_categoria     BigInt      @id @default(autoincrement()) @db.UnsignedBigInt
+  codigo_categoria String      @unique(map: "codigo_categoria") @db.VarChar(50)
+  nombre           String      @db.VarChar(100)
+  estado           Int         @default(1) @db.TinyInt
+  productos        productos[]
+}
+
+model cliente_direcciones {
+  id_direccion BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  id_cliente   BigInt    @db.UnsignedBigInt
+  direccion    String    @db.VarChar(255)
+  referencia   String?   @db.VarChar(255)
+  es_principal Int       @default(0) @db.TinyInt
+  estado       Int       @default(1) @db.TinyInt
+  created_at   DateTime? @default(now()) @db.Timestamp(0)
+  updated_at   DateTime? @db.Timestamp(0)
+  clientes     clientes  @relation(fields: [id_cliente], references: [id_cliente], onUpdate: Restrict, map: "cliente_direcciones_ibfk_1")
+
+  @@index([id_cliente], map: "idx_cliente_direcciones_cliente")
+}
+
+model cliente_estadisticas {
+  id_cliente       BigInt    @id @db.UnsignedBigInt
+  total_compras    Decimal   @default(0.00) @db.Decimal(12, 2)
+  cantidad_compras Int       @default(0)
+  ultima_compra    DateTime? @db.Date
+  total_abonos     Decimal   @default(0.00) @db.Decimal(12, 2)
+  cantidad_abonos  Int       @default(0)
+  created_at       DateTime? @default(now()) @db.Timestamp(0)
+  updated_at       DateTime? @db.Timestamp(0)
+  clientes         clientes  @relation(fields: [id_cliente], references: [id_cliente], onUpdate: Restrict, map: "cliente_estadisticas_ibfk_1")
+}
+
+model clientes {
+  id_cliente                   BigInt                         @id @default(autoincrement()) @db.UnsignedBigInt
+  codigo_cliente               String                         @unique(map: "codigo_cliente") @db.VarChar(40)
+  id_tipo_cliente              BigInt                         @db.UnsignedBigInt
+  nombres                      String                         @db.VarChar(100)
+  apellidos                    String?                        @db.VarChar(100)
+  telefono                     String?                        @db.VarChar(20)
+  nit                          String?                        @unique(map: "uk_clientes_nit") @db.VarChar(30)
+  dpi                          String?                        @unique(map: "uk_clientes_dpi") @db.VarChar(20)
+  direccion                    String?                        @db.VarChar(255)
+  observaciones                String?                        @db.VarChar(255)
+  estado                       Int                            @default(1) @db.TinyInt
+  created_at                   DateTime?                      @default(now()) @db.Timestamp(0)
+  updated_at                   DateTime?                      @db.Timestamp(0)
+  apartados                    apartados[]
+  cliente_direcciones          cliente_direcciones[]
+  cliente_estadisticas         cliente_estadisticas?
+  tipos_cliente                tipos_cliente                  @relation(fields: [id_tipo_cliente], references: [id_tipo_cliente], onUpdate: Restrict, map: "clientes_ibfk_1")
+  documentos                   documentos[]
+  historial_crediticio_cliente historial_crediticio_cliente[]
+  historial_tipo_cliente       historial_tipo_cliente[]
+  limites_credito_cliente      limites_credito_cliente?
+  notificaciones_cobro         notificaciones_cobro[]
+  referencias_cliente          referencias_cliente[]
+  ventas                       ventas[]
+
+  @@index([codigo_cliente], map: "idx_clientes_codigo")
+  @@index([dpi], map: "idx_clientes_dpi")
+  @@index([nit], map: "idx_clientes_nit")
+  @@index([telefono], map: "idx_clientes_telefono")
+  @@index([id_tipo_cliente], map: "idx_clientes_tipo")
+}
+
+model comisiones_vendedor {
+  id_comision       BigInt          @id @default(autoincrement()) @db.UnsignedBigInt
+  id_usuario        BigInt          @db.UnsignedBigInt
+  id_venta          BigInt?         @db.UnsignedBigInt
+  id_pago           BigInt?         @db.UnsignedBigInt
+  id_regla_comision BigInt          @db.UnsignedBigInt
+  monto_base        Decimal         @db.Decimal(12, 2)
+  porcentaje        Decimal         @db.Decimal(5, 2)
+  monto_comision    Decimal         @db.Decimal(12, 2)
+  fecha             DateTime        @default(now()) @db.DateTime(0)
+  id_estado         BigInt          @db.UnsignedBigInt
+  usuarios          usuarios        @relation(fields: [id_usuario], references: [id_usuario], onUpdate: Restrict, map: "comisiones_vendedor_ibfk_1")
+  ventas            ventas?         @relation(fields: [id_venta], references: [id_venta], onDelete: Restrict, onUpdate: Restrict, map: "comisiones_vendedor_ibfk_2")
+  pagos             pagos?          @relation(fields: [id_pago], references: [id_pago], onDelete: Restrict, onUpdate: Restrict, map: "comisiones_vendedor_ibfk_3")
+  reglas_comision   reglas_comision @relation(fields: [id_regla_comision], references: [id_regla_comision], onUpdate: Restrict, map: "comisiones_vendedor_ibfk_4")
+  estados_sistema   estados_sistema @relation(fields: [id_estado], references: [id_estado], onUpdate: Restrict, map: "comisiones_vendedor_ibfk_5")
+
+  @@index([id_estado], map: "id_estado")
+  @@index([id_pago], map: "id_pago")
+  @@index([id_regla_comision], map: "id_regla_comision")
+  @@index([id_venta], map: "id_venta")
+  @@index([id_usuario, fecha], map: "idx_comisiones_usuario_fecha")
+}
+
+model compra_detalle {
+  id_compra_detalle  BigInt             @id @default(autoincrement()) @db.UnsignedBigInt
+  id_compra          BigInt             @db.UnsignedBigInt
+  id_variante        BigInt             @db.UnsignedBigInt
+  cantidad           Int
+  costo_unitario     Decimal            @db.Decimal(12, 2)
+  subtotal           Decimal            @db.Decimal(12, 2)
+  compras            compras            @relation(fields: [id_compra], references: [id_compra], onUpdate: Restrict, map: "compra_detalle_ibfk_1")
+  producto_variantes producto_variantes @relation(fields: [id_variante], references: [id_variante], onUpdate: Restrict, map: "compra_detalle_ibfk_2")
+
+  @@index([id_compra], map: "id_compra")
+  @@index([id_variante], map: "id_variante")
+}
+
+model compras {
+  id_compra       BigInt           @id @default(autoincrement()) @db.UnsignedBigInt
+  codigo_compra   String           @unique(map: "codigo_compra") @db.VarChar(50)
+  id_proveedor    BigInt           @db.UnsignedBigInt
+  id_sucursal     BigInt           @db.UnsignedBigInt
+  id_usuario      BigInt           @db.UnsignedBigInt
+  id_estado       BigInt           @db.UnsignedBigInt
+  fecha           DateTime         @default(now()) @db.DateTime(0)
+  subtotal        Decimal          @default(0.00) @db.Decimal(12, 2)
+  total           Decimal          @default(0.00) @db.Decimal(12, 2)
+  observaciones   String?          @db.VarChar(255)
+  compra_detalle  compra_detalle[]
+  proveedores     proveedores      @relation(fields: [id_proveedor], references: [id_proveedor], onUpdate: Restrict, map: "compras_ibfk_1")
+  sucursales      sucursales       @relation(fields: [id_sucursal], references: [id_sucursal], onUpdate: Restrict, map: "compras_ibfk_2")
+  usuarios        usuarios         @relation(fields: [id_usuario], references: [id_usuario], onUpdate: Restrict, map: "compras_ibfk_3")
+  estados_sistema estados_sistema  @relation(fields: [id_estado], references: [id_estado], onUpdate: Restrict, map: "compras_ibfk_4")
+
+  @@index([id_usuario], map: "id_usuario")
+  @@index([id_estado], map: "idx_compras_estado")
+  @@index([fecha], map: "idx_compras_fecha")
+  @@index([id_proveedor], map: "idx_compras_proveedor")
+  @@index([id_sucursal], map: "idx_compras_sucursal")
+}
+
+model configuraciones {
+  id_configuracion BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  clave            String    @unique(map: "clave") @db.VarChar(100)
+  valor            String    @db.VarChar(255)
+  descripcion      String?   @db.VarChar(255)
+  estado           Int       @default(1) @db.TinyInt
+  created_at       DateTime? @default(now()) @db.Timestamp(0)
+  updated_at       DateTime? @db.Timestamp(0)
+}
+
+model cuota_pagos {
+  id_cuota_pago BigInt       @id @default(autoincrement()) @db.UnsignedBigInt
+  id_cuota      BigInt       @db.UnsignedBigInt
+  id_pago       BigInt       @db.UnsignedBigInt
+  monto         Decimal      @db.Decimal(12, 2)
+  fecha         DateTime     @default(now()) @db.DateTime(0)
+  venta_cuotas  venta_cuotas @relation(fields: [id_cuota], references: [id_cuota], onUpdate: Restrict, map: "cuota_pagos_ibfk_1")
+  pagos         pagos        @relation(fields: [id_pago], references: [id_pago], onUpdate: Restrict, map: "cuota_pagos_ibfk_2")
+
+  @@index([id_pago], map: "id_pago")
+  @@index([id_cuota], map: "idx_cuota_pagos_cuota")
+}
+
+model documento_detalle {
+  id_documento_detalle BigInt     @id @default(autoincrement()) @db.UnsignedBigInt
+  id_documento         BigInt     @db.UnsignedBigInt
+  codigo_item          String?    @db.VarChar(80)
+  descripcion          String     @db.VarChar(255)
+  cantidad             Decimal    @default(1.00) @db.Decimal(10, 2)
+  precio_unitario      Decimal    @default(0.00) @db.Decimal(12, 2)
+  descuento            Decimal    @default(0.00) @db.Decimal(12, 2)
+  subtotal             Decimal    @db.Decimal(12, 2)
+  documentos           documentos @relation(fields: [id_documento], references: [id_documento], onUpdate: Restrict, map: "documento_detalle_ibfk_1")
+
+  @@index([id_documento], map: "id_documento")
+}
+
+model documento_pagos {
+  id_documento_pago BigInt       @id @default(autoincrement()) @db.UnsignedBigInt
+  id_documento      BigInt       @db.UnsignedBigInt
+  id_metodo_pago    BigInt       @db.UnsignedBigInt
+  monto             Decimal      @db.Decimal(12, 2)
+  referencia        String?      @db.VarChar(100)
+  documentos        documentos   @relation(fields: [id_documento], references: [id_documento], onUpdate: Restrict, map: "documento_pagos_ibfk_1")
+  metodos_pago      metodos_pago @relation(fields: [id_metodo_pago], references: [id_metodo_pago], onUpdate: Restrict, map: "documento_pagos_ibfk_2")
+
+  @@index([id_documento], map: "id_documento")
+  @@index([id_metodo_pago], map: "id_metodo_pago")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model documentos {
+  id_documento         BigInt                 @id @default(autoincrement()) @db.UnsignedBigInt
+  codigo_documento     String                 @unique(map: "codigo_documento") @db.VarChar(50)
+  id_tipo_documento    BigInt                 @db.UnsignedBigInt
+  origen               String                 @db.VarChar(50)
+  id_origen            BigInt                 @db.UnsignedBigInt
+  id_cliente           BigInt?                @db.UnsignedBigInt
+  id_usuario           BigInt                 @db.UnsignedBigInt
+  id_sucursal          BigInt                 @db.UnsignedBigInt
+  id_estado            BigInt                 @db.UnsignedBigInt
+  fecha                DateTime               @default(now()) @db.DateTime(0)
+  subtotal             Decimal                @default(0.00) @db.Decimal(12, 2)
+  descuento            Decimal                @default(0.00) @db.Decimal(12, 2)
+  total                Decimal                @db.Decimal(12, 2)
+  observaciones        String?                @db.VarChar(255)
+  auditoria_documentos auditoria_documentos[]
+  documento_detalle    documento_detalle[]
+  documento_pagos      documento_pagos[]
+  tipos_documento      tipos_documento        @relation(fields: [id_tipo_documento], references: [id_tipo_documento], onUpdate: Restrict, map: "documentos_ibfk_1")
+  clientes             clientes?              @relation(fields: [id_cliente], references: [id_cliente], onDelete: Restrict, onUpdate: Restrict, map: "documentos_ibfk_2")
+  usuarios             usuarios               @relation(fields: [id_usuario], references: [id_usuario], onUpdate: Restrict, map: "documentos_ibfk_3")
+  sucursales           sucursales             @relation(fields: [id_sucursal], references: [id_sucursal], onUpdate: Restrict, map: "documentos_ibfk_4")
+  estados_sistema      estados_sistema        @relation(fields: [id_estado], references: [id_estado], onUpdate: Restrict, map: "documentos_ibfk_5")
+
+  @@index([id_cliente], map: "id_cliente")
+  @@index([id_estado], map: "id_estado")
+  @@index([id_sucursal], map: "id_sucursal")
+  @@index([id_usuario], map: "id_usuario")
+  @@index([codigo_documento], map: "idx_documentos_codigo")
+  @@index([fecha], map: "idx_documentos_fecha")
+  @@index([origen, id_origen], map: "idx_documentos_origen")
+  @@index([id_tipo_documento], map: "idx_documentos_tipo")
+}
+
+model empleados {
+  id_empleado     BigInt     @id @default(autoincrement()) @db.UnsignedBigInt
+  codigo_empleado String     @unique(map: "codigo_empleado") @db.VarChar(40)
+  id_sucursal     BigInt     @db.UnsignedBigInt
+  nombres         String     @db.VarChar(100)
+  apellidos       String     @db.VarChar(100)
+  telefono        String?    @db.VarChar(20)
+  direccion       String?    @db.VarChar(255)
+  puesto          String?    @db.VarChar(80)
+  estado          Int        @default(1) @db.TinyInt
+  created_at      DateTime?  @default(now()) @db.Timestamp(0)
+  updated_at      DateTime?  @db.Timestamp(0)
+  sucursales      sucursales @relation(fields: [id_sucursal], references: [id_sucursal], onUpdate: Restrict, map: "fk_empleado_sucursal")
+  usuarios        usuarios[]
+
+  @@index([codigo_empleado], map: "idx_empleados_codigo")
+  @@index([id_sucursal], map: "idx_empleados_sucursal")
+}
+
+model estados_sistema {
+  id_estado               BigInt                    @id @default(autoincrement()) @db.UnsignedBigInt
+  modulo                  String                    @db.VarChar(50)
+  codigo                  String                    @db.VarChar(50)
+  nombre                  String                    @db.VarChar(100)
+  descripcion             String?                   @db.VarChar(255)
+  estado                  Int                       @default(1) @db.TinyInt
+  apartados               apartados[]
+  caja_turnos             caja_turnos[]
+  comisiones_vendedor     comisiones_vendedor[]
+  compras                 compras[]
+  documentos              documentos[]
+  limites_credito_cliente limites_credito_cliente[]
+  notificaciones_cobro    notificaciones_cobro[]
+  venta_cuotas            venta_cuotas[]
+  ventas                  ventas[]
+  ventas_financiamiento   ventas_financiamiento[]
+
+  @@unique([modulo, codigo], map: "modulo")
+  @@index([modulo, codigo], map: "idx_estados_modulo_codigo")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model historial_crediticio_cliente {
+  id_historial            BigInt                 @id @default(autoincrement()) @db.UnsignedBigInt
+  id_cliente              BigInt                 @db.UnsignedBigInt
+  id_venta_financiamiento BigInt?                @db.UnsignedBigInt
+  tipo_evento             String                 @db.VarChar(60)
+  descripcion             String?                @db.VarChar(255)
+  dias_atraso             Int                    @default(0)
+  monto_mora              Decimal                @default(0.00) @db.Decimal(12, 2)
+  fecha                   DateTime               @default(now()) @db.DateTime(0)
+  clientes                clientes               @relation(fields: [id_cliente], references: [id_cliente], onUpdate: Restrict, map: "historial_crediticio_cliente_ibfk_1")
+  ventas_financiamiento   ventas_financiamiento? @relation(fields: [id_venta_financiamiento], references: [id_venta_financiamiento], onDelete: Restrict, onUpdate: Restrict, map: "historial_crediticio_cliente_ibfk_2")
+
+  @@index([id_venta_financiamiento], map: "id_venta_financiamiento")
+  @@index([id_cliente], map: "idx_historial_crediticio_cliente")
+}
+
+model historial_tipo_cliente {
+  id_historial                                                         BigInt        @id @default(autoincrement()) @db.UnsignedBigInt
+  id_cliente                                                           BigInt        @db.UnsignedBigInt
+  id_tipo_anterior                                                     BigInt        @db.UnsignedBigInt
+  id_tipo_nuevo                                                        BigInt        @db.UnsignedBigInt
+  motivo                                                               String?       @db.VarChar(255)
+  fecha                                                                DateTime      @default(now()) @db.DateTime(0)
+  clientes                                                             clientes      @relation(fields: [id_cliente], references: [id_cliente], onUpdate: Restrict, map: "historial_tipo_cliente_ibfk_1")
+  tipos_cliente_historial_tipo_cliente_id_tipo_anteriorTotipos_cliente tipos_cliente @relation("historial_tipo_cliente_id_tipo_anteriorTotipos_cliente", fields: [id_tipo_anterior], references: [id_tipo_cliente], onUpdate: Restrict, map: "historial_tipo_cliente_ibfk_2")
+  tipos_cliente_historial_tipo_cliente_id_tipo_nuevoTotipos_cliente    tipos_cliente @relation("historial_tipo_cliente_id_tipo_nuevoTotipos_cliente", fields: [id_tipo_nuevo], references: [id_tipo_cliente], onUpdate: Restrict, map: "historial_tipo_cliente_ibfk_3")
+
+  @@index([id_cliente], map: "id_cliente")
+  @@index([id_tipo_anterior], map: "id_tipo_anterior")
+  @@index([id_tipo_nuevo], map: "id_tipo_nuevo")
+}
+
+model inventario_movimientos {
+  id_movimiento               BigInt                      @id @default(autoincrement()) @db.UnsignedBigInt
+  id_sucursal                 BigInt                      @db.UnsignedBigInt
+  id_variante                 BigInt                      @db.UnsignedBigInt
+  id_usuario                  BigInt                      @db.UnsignedBigInt
+  id_tipo_movimiento          BigInt                      @db.UnsignedBigInt
+  cantidad                    Int
+  referencia                  String?                     @db.VarChar(100)
+  descripcion                 String?                     @db.VarChar(255)
+  fecha                       DateTime                    @default(now()) @db.DateTime(0)
+  sucursales                  sucursales                  @relation(fields: [id_sucursal], references: [id_sucursal], onUpdate: Restrict, map: "inventario_movimientos_ibfk_1")
+  producto_variantes          producto_variantes          @relation(fields: [id_variante], references: [id_variante], onUpdate: Restrict, map: "inventario_movimientos_ibfk_2")
+  usuarios                    usuarios                    @relation(fields: [id_usuario], references: [id_usuario], onUpdate: Restrict, map: "inventario_movimientos_ibfk_3")
+  tipos_movimiento_inventario tipos_movimiento_inventario @relation(fields: [id_tipo_movimiento], references: [id_tipo_movimiento], onUpdate: Restrict, map: "inventario_movimientos_ibfk_4")
+
+  @@index([id_tipo_movimiento], map: "id_tipo_movimiento")
+  @@index([id_usuario], map: "id_usuario")
+  @@index([id_variante], map: "id_variante")
+  @@index([fecha], map: "idx_mov_inv_fecha")
+  @@index([id_sucursal, id_variante], map: "idx_mov_inv_sucursal_variante")
+}
+
+model inventario_sucursal {
+  id_inventario      BigInt             @id @default(autoincrement()) @db.UnsignedBigInt
+  id_sucursal        BigInt             @db.UnsignedBigInt
+  id_variante        BigInt             @db.UnsignedBigInt
+  stock_actual       Int                @default(0)
+  stock_reservado    Int                @default(0)
+  stock_minimo       Int                @default(0)
+  sucursales         sucursales         @relation(fields: [id_sucursal], references: [id_sucursal], onUpdate: Restrict, map: "inventario_sucursal_ibfk_1")
+  producto_variantes producto_variantes @relation(fields: [id_variante], references: [id_variante], onUpdate: Restrict, map: "inventario_sucursal_ibfk_2")
+
+  @@unique([id_sucursal, id_variante], map: "id_sucursal")
+  @@index([id_sucursal], map: "idx_inventario_sucursal")
+  @@index([id_variante], map: "idx_inventario_variante")
+}
+
+model limites_credito_cliente {
+  id_limite         BigInt          @id @default(autoincrement()) @db.UnsignedBigInt
+  id_cliente        BigInt          @unique(map: "id_cliente") @db.UnsignedBigInt
+  limite_credito    Decimal         @default(0.00) @db.Decimal(12, 2)
+  credito_utilizado Decimal         @default(0.00) @db.Decimal(12, 2)
+  score_interno     Int             @default(0)
+  id_estado         BigInt          @db.UnsignedBigInt
+  fecha_revision    DateTime?       @db.Date
+  observaciones     String?         @db.VarChar(255)
+  created_at        DateTime?       @default(now()) @db.Timestamp(0)
+  updated_at        DateTime?       @db.Timestamp(0)
+  clientes          clientes        @relation(fields: [id_cliente], references: [id_cliente], onUpdate: Restrict, map: "limites_credito_cliente_ibfk_1")
+  estados_sistema   estados_sistema @relation(fields: [id_estado], references: [id_estado], onUpdate: Restrict, map: "limites_credito_cliente_ibfk_2")
+
+  @@index([id_estado], map: "idx_limites_credito_estado")
+}
+
+model metas_vendedor {
+  id_meta       BigInt     @id @default(autoincrement()) @db.UnsignedBigInt
+  id_usuario    BigInt     @db.UnsignedBigInt
+  id_sucursal   BigInt     @db.UnsignedBigInt
+  mes           Int
+  anio          Int
+  meta_monto    Decimal    @default(0.00) @db.Decimal(12, 2)
+  meta_unidades Int        @default(0)
+  estado        Int        @default(1) @db.TinyInt
+  created_at    DateTime?  @default(now()) @db.Timestamp(0)
+  updated_at    DateTime?  @db.Timestamp(0)
+  usuarios      usuarios   @relation(fields: [id_usuario], references: [id_usuario], onUpdate: Restrict, map: "metas_vendedor_ibfk_1")
+  sucursales    sucursales @relation(fields: [id_sucursal], references: [id_sucursal], onUpdate: Restrict, map: "metas_vendedor_ibfk_2")
+
+  @@unique([id_usuario, mes, anio], map: "id_usuario")
+  @@index([id_sucursal], map: "id_sucursal")
+  @@index([id_usuario, anio, mes], map: "idx_metas_usuario_fecha")
+}
+
+model metodos_pago {
+  id_metodo_pago      BigInt             @id @default(autoincrement()) @db.UnsignedBigInt
+  codigo              String             @unique(map: "codigo") @db.VarChar(50)
+  nombre              String             @db.VarChar(100)
+  requiere_referencia Int                @default(0) @db.TinyInt
+  estado              Int                @default(1) @db.TinyInt
+  caja_movimientos    caja_movimientos[]
+  documento_pagos     documento_pagos[]
+  pagos               pagos[]
+}
+
+model modulos {
+  id_modulo       BigInt           @id @default(autoincrement()) @db.UnsignedBigInt
+  codigo          String           @unique(map: "codigo") @db.VarChar(80)
+  nombre          String           @db.VarChar(100)
+  descripcion     String?          @db.VarChar(255)
+  ruta            String?          @db.VarChar(150)
+  icono           String?          @db.VarChar(100)
+  id_modulo_padre BigInt?          @db.UnsignedBigInt
+  orden_menu      Int              @default(0)
+  visible_menu    Int              @default(1) @db.TinyInt
+  estado          Int              @default(1) @db.TinyInt
+  modulos         modulos?         @relation("modulosTomodulos", fields: [id_modulo_padre], references: [id_modulo], onDelete: Restrict, onUpdate: Restrict, map: "modulos_ibfk_1")
+  other_modulos   modulos[]        @relation("modulosTomodulos")
+  permiso_modulo  permiso_modulo[]
+  permisos        permisos[]
+
+  @@index([codigo], map: "idx_modulos_codigo")
+  @@index([visible_menu, orden_menu], map: "idx_modulos_menu")
+  @@index([id_modulo_padre], map: "idx_modulos_padre")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model notificaciones_cobro {
+  id_notificacion  BigInt          @id @default(autoincrement()) @db.UnsignedBigInt
+  id_cliente       BigInt          @db.UnsignedBigInt
+  id_cuota         BigInt?         @db.UnsignedBigInt
+  tipo             String          @db.VarChar(50)
+  mensaje          String          @db.VarChar(255)
+  fecha_programada DateTime        @db.DateTime(0)
+  fecha_enviada    DateTime?       @db.DateTime(0)
+  id_estado        BigInt          @db.UnsignedBigInt
+  created_at       DateTime?       @default(now()) @db.Timestamp(0)
+  clientes         clientes        @relation(fields: [id_cliente], references: [id_cliente], onUpdate: Restrict, map: "notificaciones_cobro_ibfk_1")
+  venta_cuotas     venta_cuotas?   @relation(fields: [id_cuota], references: [id_cuota], onDelete: Restrict, onUpdate: Restrict, map: "notificaciones_cobro_ibfk_2")
+  estados_sistema  estados_sistema @relation(fields: [id_estado], references: [id_estado], onUpdate: Restrict, map: "notificaciones_cobro_ibfk_3")
+
+  @@index([id_cliente], map: "id_cliente")
+  @@index([id_cuota], map: "id_cuota")
+  @@index([id_estado], map: "id_estado")
+  @@index([fecha_programada], map: "idx_notificaciones_fecha")
+}
+
+model pagos {
+  id_pago             BigInt                @id @default(autoincrement()) @db.UnsignedBigInt
+  id_venta            BigInt?               @db.UnsignedBigInt
+  id_apartado         BigInt?               @db.UnsignedBigInt
+  id_turno            BigInt                @db.UnsignedBigInt
+  id_metodo_pago      BigInt                @db.UnsignedBigInt
+  monto               Decimal               @db.Decimal(12, 2)
+  referencia          String?               @db.VarChar(100)
+  fecha               DateTime              @default(now()) @db.DateTime(0)
+  comisiones_vendedor comisiones_vendedor[]
+  cuota_pagos         cuota_pagos[]
+  ventas              ventas?               @relation(fields: [id_venta], references: [id_venta], onDelete: Restrict, onUpdate: Restrict, map: "pagos_ibfk_1")
+  apartados           apartados?            @relation(fields: [id_apartado], references: [id_apartado], onDelete: Restrict, onUpdate: Restrict, map: "pagos_ibfk_2")
+  caja_turnos         caja_turnos           @relation(fields: [id_turno], references: [id_turno], onUpdate: Restrict, map: "pagos_ibfk_3")
+  metodos_pago        metodos_pago          @relation(fields: [id_metodo_pago], references: [id_metodo_pago], onUpdate: Restrict, map: "pagos_ibfk_4")
+
+  @@index([id_turno], map: "id_turno")
+  @@index([id_apartado], map: "idx_pagos_apartado")
+  @@index([fecha], map: "idx_pagos_fecha")
+  @@index([id_metodo_pago], map: "idx_pagos_metodo")
+  @@index([id_venta], map: "idx_pagos_venta")
+}
+
+model permiso_accion {
+  id_permiso       BigInt           @db.UnsignedBigInt
+  id_accion        BigInt           @db.UnsignedBigInt
+  permisos         permisos         @relation(fields: [id_permiso], references: [id_permiso], onUpdate: Restrict, map: "permiso_accion_ibfk_1")
+  acciones_sistema acciones_sistema @relation(fields: [id_accion], references: [id_accion], onUpdate: Restrict, map: "permiso_accion_ibfk_2")
+
+  @@id([id_permiso, id_accion])
+  @@index([id_accion], map: "id_accion")
+}
+
+model permiso_modulo {
+  id_permiso BigInt   @db.UnsignedBigInt
+  id_modulo  BigInt   @db.UnsignedBigInt
+  permisos   permisos @relation(fields: [id_permiso], references: [id_permiso], onUpdate: Restrict, map: "permiso_modulo_ibfk_1")
+  modulos    modulos  @relation(fields: [id_modulo], references: [id_modulo], onUpdate: Restrict, map: "permiso_modulo_ibfk_2")
+
+  @@id([id_permiso, id_modulo])
+  @@index([id_modulo], map: "id_modulo")
+}
+
+model permisos {
+  id_permiso       BigInt            @id @default(autoincrement()) @db.UnsignedBigInt
+  codigo_permiso   String            @unique(map: "codigo_permiso") @db.VarChar(100)
+  id_modulo        BigInt?           @db.UnsignedBigInt
+  id_accion        BigInt?           @db.UnsignedBigInt
+  descripcion      String?           @db.VarChar(255)
+  estado           Int               @default(1) @db.TinyInt
+  permiso_accion   permiso_accion[]
+  permiso_modulo   permiso_modulo[]
+  modulos          modulos?          @relation(fields: [id_modulo], references: [id_modulo], onDelete: Restrict, onUpdate: Restrict, map: "permisos_ibfk_1")
+  acciones_sistema acciones_sistema? @relation(fields: [id_accion], references: [id_accion], onDelete: Restrict, onUpdate: Restrict, map: "permisos_ibfk_2")
+  rol_permiso      rol_permiso[]
+
+  @@index([id_accion], map: "idx_permisos_accion")
+  @@index([codigo_permiso], map: "idx_permisos_codigo")
+  @@index([id_modulo], map: "idx_permisos_modulo")
+}
+
+model planes_financiamiento {
+  id_plan               BigInt                  @id @default(autoincrement()) @db.UnsignedBigInt
+  codigo_plan           String                  @unique(map: "codigo_plan") @db.VarChar(50)
+  nombre                String                  @db.VarChar(120)
+  cantidad_cuotas       Int
+  tasa_interes          Decimal                 @default(0.00) @db.Decimal(5, 2)
+  id_politica           BigInt                  @db.UnsignedBigInt
+  monto_minimo          Decimal                 @default(0.00) @db.Decimal(12, 2)
+  monto_maximo          Decimal?                @db.Decimal(12, 2)
+  estado                Int                     @default(1) @db.TinyInt
+  created_at            DateTime?               @default(now()) @db.Timestamp(0)
+  updated_at            DateTime?               @db.Timestamp(0)
+  politicas_credito     politicas_credito       @relation(fields: [id_politica], references: [id_politica], onUpdate: Restrict, map: "planes_financiamiento_ibfk_1")
+  ventas_financiamiento ventas_financiamiento[]
+
+  @@index([id_politica], map: "id_politica")
+  @@index([cantidad_cuotas], map: "idx_planes_cuotas")
+}
+
+model politicas_credito {
+  id_politica             BigInt                  @id @default(autoincrement()) @db.UnsignedBigInt
+  codigo                  String                  @unique(map: "codigo") @db.VarChar(50)
+  nombre                  String                  @db.VarChar(120)
+  porcentaje_enganche     Decimal                 @default(0.00) @db.Decimal(5, 2)
+  dias_gracia             Int                     @default(5)
+  mora_porcentaje_mensual Decimal                 @default(2.00) @db.Decimal(5, 2)
+  mora_maxima_porcentaje  Decimal                 @default(10.00) @db.Decimal(5, 2)
+  permite_refinanciar     Int                     @default(0) @db.TinyInt
+  requiere_garante        Int                     @default(0) @db.TinyInt
+  estado                  Int                     @default(1) @db.TinyInt
+  created_at              DateTime?               @default(now()) @db.Timestamp(0)
+  updated_at              DateTime?               @db.Timestamp(0)
+  planes_financiamiento   planes_financiamiento[]
+}
+
+model producto_proveedor {
+  id_producto_proveedor     BigInt             @id @default(autoincrement()) @db.UnsignedBigInt
+  id_variante               BigInt             @db.UnsignedBigInt
+  id_proveedor              BigInt             @db.UnsignedBigInt
+  codigo_producto_proveedor String?            @db.VarChar(80)
+  costo_compra              Decimal            @db.Decimal(12, 2)
+  estado                    Int                @default(1) @db.TinyInt
+  producto_variantes        producto_variantes @relation(fields: [id_variante], references: [id_variante], onUpdate: Restrict, map: "producto_proveedor_ibfk_1")
+  proveedores               proveedores        @relation(fields: [id_proveedor], references: [id_proveedor], onUpdate: Restrict, map: "producto_proveedor_ibfk_2")
+
+  @@unique([id_variante, id_proveedor], map: "id_variante")
+  @@index([id_proveedor], map: "idx_producto_proveedor_proveedor")
+  @@index([id_variante], map: "idx_producto_proveedor_variante")
+}
+
+model producto_variantes {
+  id_variante            BigInt                   @id @default(autoincrement()) @db.UnsignedBigInt
+  id_producto            BigInt                   @db.UnsignedBigInt
+  codigo_variante        String                   @unique(map: "codigo_variante") @db.VarChar(60)
+  color                  String?                  @db.VarChar(50)
+  material               String?                  @db.VarChar(80)
+  medida                 String?                  @db.VarChar(80)
+  precio_venta           Decimal                  @db.Decimal(12, 2)
+  estado                 Int                      @default(1) @db.TinyInt
+  created_at             DateTime?                @default(now()) @db.Timestamp(0)
+  updated_at             DateTime?                @db.Timestamp(0)
+  apartado_detalle       apartado_detalle[]
+  compra_detalle         compra_detalle[]
+  inventario_movimientos inventario_movimientos[]
+  inventario_sucursal    inventario_sucursal[]
+  producto_proveedor     producto_proveedor[]
+  productos              productos                @relation(fields: [id_producto], references: [id_producto], onUpdate: Restrict, map: "producto_variantes_ibfk_1")
+  venta_detalle          venta_detalle[]
+
+  @@index([codigo_variante], map: "idx_variantes_codigo")
+  @@index([id_producto], map: "idx_variantes_producto")
+}
+
+model productos {
+  id_producto        BigInt               @id @default(autoincrement()) @db.UnsignedBigInt
+  codigo_producto    String               @unique(map: "codigo_producto") @db.VarChar(50)
+  id_categoria       BigInt               @db.UnsignedBigInt
+  nombre             String               @db.VarChar(150)
+  descripcion        String?              @db.Text
+  estado             Int                  @default(1) @db.TinyInt
+  created_at         DateTime?            @default(now()) @db.Timestamp(0)
+  updated_at         DateTime?            @db.Timestamp(0)
+  producto_variantes producto_variantes[]
+  categorias         categorias           @relation(fields: [id_categoria], references: [id_categoria], onUpdate: Restrict, map: "productos_ibfk_1")
+
+  @@index([id_categoria], map: "idx_productos_categoria")
+  @@index([codigo_producto], map: "idx_productos_codigo")
+}
+
+model proveedores {
+  id_proveedor       BigInt               @id @default(autoincrement()) @db.UnsignedBigInt
+  codigo_proveedor   String               @unique(map: "codigo_proveedor") @db.VarChar(40)
+  nombre             String               @db.VarChar(150)
+  telefono           String?              @db.VarChar(20)
+  direccion          String?              @db.VarChar(255)
+  estado             Int                  @default(1) @db.TinyInt
+  created_at         DateTime?            @default(now()) @db.Timestamp(0)
+  updated_at         DateTime?            @db.Timestamp(0)
+  compras            compras[]
+  producto_proveedor producto_proveedor[]
+}
+
+model referencias_cliente {
+  id_referencia BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  id_cliente    BigInt    @db.UnsignedBigInt
+  nombre        String    @db.VarChar(150)
+  telefono      String    @db.VarChar(20)
+  parentesco    String?   @db.VarChar(80)
+  direccion     String?   @db.VarChar(255)
+  es_garante    Int       @default(0) @db.TinyInt
+  estado        Int       @default(1) @db.TinyInt
+  created_at    DateTime? @default(now()) @db.Timestamp(0)
+  updated_at    DateTime? @db.Timestamp(0)
+  clientes      clientes  @relation(fields: [id_cliente], references: [id_cliente], onUpdate: Restrict, map: "referencias_cliente_ibfk_1")
+
+  @@index([id_cliente], map: "idx_referencias_cliente")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model reglas_comision {
+  id_regla_comision   BigInt                @id @default(autoincrement()) @db.UnsignedBigInt
+  codigo              String                @unique(map: "codigo") @db.VarChar(50)
+  nombre              String                @db.VarChar(120)
+  porcentaje_comision Decimal               @default(0.00) @db.Decimal(5, 2)
+  aplica_sobre        String                @default("VENTA") @db.VarChar(50)
+  monto_minimo        Decimal               @default(0.00) @db.Decimal(12, 2)
+  estado              Int                   @default(1) @db.TinyInt
+  created_at          DateTime?             @default(now()) @db.Timestamp(0)
+  comisiones_vendedor comisiones_vendedor[]
+}
+
+model rol_permiso {
+  id_rol     BigInt   @db.UnsignedBigInt
+  id_permiso BigInt   @db.UnsignedBigInt
+  roles      roles    @relation(fields: [id_rol], references: [id_rol], onUpdate: Restrict, map: "rol_permiso_ibfk_1")
+  permisos   permisos @relation(fields: [id_permiso], references: [id_permiso], onUpdate: Restrict, map: "rol_permiso_ibfk_2")
+
+  @@id([id_rol, id_permiso])
+  @@index([id_permiso], map: "id_permiso")
+}
+
+model roles {
+  id_rol      BigInt        @id @default(autoincrement()) @db.UnsignedBigInt
+  codigo_rol  String        @unique(map: "codigo_rol") @db.VarChar(50)
+  nombre      String        @unique(map: "nombre") @db.VarChar(80)
+  descripcion String?       @db.VarChar(255)
+  estado      Int           @default(1) @db.TinyInt
+  rol_permiso rol_permiso[]
+  usuario_rol usuario_rol[]
+}
+
+model secuencias_documentos {
+  id_secuencia       BigInt          @id @default(autoincrement()) @db.UnsignedBigInt
+  id_sucursal        BigInt          @db.UnsignedBigInt
+  id_tipo_documento  BigInt          @db.UnsignedBigInt
+  serie              String          @db.VarChar(20)
+  correlativo_actual BigInt          @default(0) @db.UnsignedBigInt
+  estado             Int             @default(1) @db.TinyInt
+  sucursales         sucursales      @relation(fields: [id_sucursal], references: [id_sucursal], onUpdate: Restrict, map: "secuencias_documentos_ibfk_1")
+  tipos_documento    tipos_documento @relation(fields: [id_tipo_documento], references: [id_tipo_documento], onUpdate: Restrict, map: "secuencias_documentos_ibfk_2")
+
+  @@unique([id_sucursal, id_tipo_documento, serie], map: "id_sucursal")
+  @@index([id_tipo_documento], map: "id_tipo_documento")
+}
+
+model seguridad_intentos_login {
+  id_intento      BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  email_usuario   String    @db.VarChar(150)
+  ip              String?   @db.VarChar(45)
+  user_agent      String?   @db.VarChar(255)
+  intentos        Int       @default(1)
+  ultimo_intento  DateTime  @default(now()) @db.DateTime(0)
+  bloqueado_hasta DateTime? @db.DateTime(0)
+  estado          Int       @default(1) @db.TinyInt
+
+  @@index([email_usuario], map: "idx_seguridad_intentos_email")
+  @@index([ip], map: "idx_seguridad_intentos_ip")
+}
+
+model sesiones_usuario {
+  id_sesion         BigInt              @id @default(autoincrement()) @db.UnsignedBigInt
+  id_usuario        BigInt              @db.UnsignedBigInt
+  token_hash        String              @db.VarChar(255)
+  ip                String?             @db.VarChar(45)
+  user_agent        String?             @db.VarChar(255)
+  fecha_inicio      DateTime            @default(now()) @db.DateTime(0)
+  fecha_fin         DateTime?           @db.DateTime(0)
+  estado            Int                 @default(1) @db.TinyInt
+  auditoria_eventos auditoria_eventos[]
+  usuarios          usuarios            @relation(fields: [id_usuario], references: [id_usuario], onUpdate: Restrict, map: "sesiones_usuario_ibfk_1")
+
+  @@index([estado], map: "idx_sesiones_estado")
+  @@index([id_usuario], map: "idx_sesiones_usuario")
+}
+
+model sucursales {
+  id_sucursal            BigInt                   @id @default(autoincrement()) @db.UnsignedBigInt
+  codigo_sucursal        String                   @unique(map: "codigo_sucursal") @db.VarChar(30)
+  nombre                 String                   @db.VarChar(120)
+  direccion              String?                  @db.VarChar(255)
+  telefono               String?                  @db.VarChar(20)
+  estado                 Int                      @default(1) @db.TinyInt
+  created_at             DateTime?                @default(now()) @db.Timestamp(0)
+  updated_at             DateTime?                @db.Timestamp(0)
+  apartados              apartados[]
+  cajas                  cajas[]
+  compras                compras[]
+  documentos             documentos[]
+  empleados              empleados[]
+  inventario_movimientos inventario_movimientos[]
+  inventario_sucursal    inventario_sucursal[]
+  metas_vendedor         metas_vendedor[]
+  secuencias_documentos  secuencias_documentos[]
+  ventas                 ventas[]
+}
+
+model tipos_cliente {
+  id_tipo_cliente                                                               BigInt                   @id @default(autoincrement()) @db.UnsignedBigInt
+  codigo                                                                        String                   @unique(map: "codigo") @db.VarChar(50)
+  nombre                                                                        String                   @db.VarChar(100)
+  porcentaje_descuento                                                          Decimal                  @default(0.00) @db.Decimal(5, 2)
+  estado                                                                        Int                      @default(1) @db.TinyInt
+  clientes                                                                      clientes[]
+  historial_tipo_cliente_historial_tipo_cliente_id_tipo_anteriorTotipos_cliente historial_tipo_cliente[] @relation("historial_tipo_cliente_id_tipo_anteriorTotipos_cliente")
+  historial_tipo_cliente_historial_tipo_cliente_id_tipo_nuevoTotipos_cliente    historial_tipo_cliente[] @relation("historial_tipo_cliente_id_tipo_nuevoTotipos_cliente")
+}
+
+model tipos_documento {
+  id_tipo_documento     BigInt                  @id @default(autoincrement()) @db.UnsignedBigInt
+  codigo                String                  @unique(map: "codigo") @db.VarChar(50)
+  nombre                String                  @db.VarChar(100)
+  prefijo               String                  @db.VarChar(10)
+  estado                Int                     @default(1) @db.TinyInt
+  documentos            documentos[]
+  secuencias_documentos secuencias_documentos[]
+}
+
+model tipos_evento_auditoria {
+  id_tipo_evento    BigInt                              @id @default(autoincrement()) @db.UnsignedBigInt
+  codigo            String                              @unique(map: "codigo") @db.VarChar(80)
+  nombre            String                              @db.VarChar(120)
+  descripcion       String?                             @db.VarChar(255)
+  nivel_riesgo      tipos_evento_auditoria_nivel_riesgo @default(BAJO)
+  estado            Int                                 @default(1) @db.TinyInt
+  auditoria_eventos auditoria_eventos[]
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model tipos_movimiento_caja {
+  id_tipo_movimiento_caja BigInt             @id @default(autoincrement()) @db.UnsignedBigInt
+  codigo                  String             @unique(map: "codigo") @db.VarChar(50)
+  nombre                  String             @db.VarChar(100)
+  afecta_caja             Int
+  estado                  Int                @default(1) @db.TinyInt
+  caja_movimientos        caja_movimientos[]
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model tipos_movimiento_inventario {
+  id_tipo_movimiento     BigInt                   @id @default(autoincrement()) @db.UnsignedBigInt
+  codigo                 String                   @unique(map: "codigo") @db.VarChar(50)
+  nombre                 String                   @db.VarChar(100)
+  afecta_stock           Int
+  estado                 Int                      @default(1) @db.TinyInt
+  inventario_movimientos inventario_movimientos[]
+}
+
+model usuario_rol {
+  id_usuario BigInt   @db.UnsignedBigInt
+  id_rol     BigInt   @db.UnsignedBigInt
+  usuarios   usuarios @relation(fields: [id_usuario], references: [id_usuario], onUpdate: Restrict, map: "usuario_rol_ibfk_1")
+  roles      roles    @relation(fields: [id_rol], references: [id_rol], onUpdate: Restrict, map: "usuario_rol_ibfk_2")
+
+  @@id([id_usuario, id_rol])
+  @@index([id_rol], map: "id_rol")
+}
+
+model usuarios {
+  id_usuario                                                                        BigInt                              @id @default(autoincrement()) @db.UnsignedBigInt
+  id_empleado                                                                       BigInt                              @db.UnsignedBigInt
+  usuario                                                                           String                              @unique(map: "usuario") @db.VarChar(80)
+  email                                                                             String                              @unique(map: "email") @db.VarChar(150)
+  password_hash                                                                     String                              @db.VarChar(255)
+  estado                                                                            Int                                 @default(1) @db.TinyInt
+  ultimo_login                                                                      DateTime?                           @db.DateTime(0)
+  created_at                                                                        DateTime?                           @default(now()) @db.Timestamp(0)
+  updated_at                                                                        DateTime?                           @db.Timestamp(0)
+  apartados                                                                         apartados[]
+  auditoria_accesos                                                                 auditoria_accesos[]
+  auditoria_anulaciones                                                             auditoria_anulaciones[]
+  auditoria_consultas                                                               auditoria_consultas[]
+  auditoria_documentos                                                              auditoria_documentos[]
+  auditoria_errores_sistema                                                         auditoria_errores_sistema[]
+  auditoria_eventos                                                                 auditoria_eventos[]
+  auditoria_respaldos_exportaciones                                                 auditoria_respaldos_exportaciones[]
+  autorizaciones_especiales_autorizaciones_especiales_id_usuario_solicitaTousuarios autorizaciones_especiales[]         @relation("autorizaciones_especiales_id_usuario_solicitaTousuarios")
+  autorizaciones_especiales_autorizaciones_especiales_id_usuario_autorizaTousuarios autorizaciones_especiales[]         @relation("autorizaciones_especiales_id_usuario_autorizaTousuarios")
+  bitacora_auditoria                                                                bitacora_auditoria[]
+  caja_turnos                                                                       caja_turnos[]
+  comisiones_vendedor                                                               comisiones_vendedor[]
+  compras                                                                           compras[]
+  documentos                                                                        documentos[]
+  inventario_movimientos                                                            inventario_movimientos[]
+  metas_vendedor                                                                    metas_vendedor[]
+  sesiones_usuario                                                                  sesiones_usuario[]
+  usuario_rol                                                                       usuario_rol[]
+  empleados                                                                         empleados                           @relation(fields: [id_empleado], references: [id_empleado], onUpdate: Restrict, map: "fk_usuario_empleado")
+  ventas                                                                            ventas[]
+
+  @@index([email], map: "idx_usuarios_email")
+  @@index([id_empleado], map: "idx_usuarios_empleado")
+}
+
+model venta_cuotas {
+  id_cuota                BigInt                 @id @default(autoincrement()) @db.UnsignedBigInt
+  id_venta_financiamiento BigInt                 @db.UnsignedBigInt
+  numero_cuota            Int
+  fecha_vencimiento       DateTime               @db.Date
+  monto_programado        Decimal                @db.Decimal(12, 2)
+  monto_pagado            Decimal                @default(0.00) @db.Decimal(12, 2)
+  saldo                   Decimal                @db.Decimal(12, 2)
+  interes_mora            Decimal                @default(0.00) @db.Decimal(12, 2)
+  dias_atraso             Int                    @default(0)
+  id_estado               BigInt                 @db.UnsignedBigInt
+  created_at              DateTime?              @default(now()) @db.Timestamp(0)
+  updated_at              DateTime?              @db.Timestamp(0)
+  cuota_pagos             cuota_pagos[]
+  notificaciones_cobro    notificaciones_cobro[]
+  ventas_financiamiento   ventas_financiamiento  @relation(fields: [id_venta_financiamiento], references: [id_venta_financiamiento], onUpdate: Restrict, map: "venta_cuotas_ibfk_1")
+  estados_sistema         estados_sistema        @relation(fields: [id_estado], references: [id_estado], onUpdate: Restrict, map: "venta_cuotas_ibfk_2")
+
+  @@unique([id_venta_financiamiento, numero_cuota], map: "id_venta_financiamiento")
+  @@index([id_estado], map: "idx_venta_cuotas_estado")
+  @@index([fecha_vencimiento], map: "idx_venta_cuotas_vencimiento")
+}
+
+model venta_detalle {
+  id_venta_detalle   BigInt             @id @default(autoincrement()) @db.UnsignedBigInt
+  id_venta           BigInt             @db.UnsignedBigInt
+  id_variante        BigInt             @db.UnsignedBigInt
+  cantidad           Int
+  precio_unitario    Decimal            @db.Decimal(12, 2)
+  descuento          Decimal            @default(0.00) @db.Decimal(12, 2)
+  subtotal           Decimal            @db.Decimal(12, 2)
+  ventas             ventas             @relation(fields: [id_venta], references: [id_venta], onUpdate: Restrict, map: "venta_detalle_ibfk_1")
+  producto_variantes producto_variantes @relation(fields: [id_variante], references: [id_variante], onUpdate: Restrict, map: "venta_detalle_ibfk_2")
+
+  @@index([id_variante], map: "id_variante")
+  @@index([id_venta], map: "id_venta")
+}
+
+model ventas {
+  id_venta              BigInt                 @id @default(autoincrement()) @db.UnsignedBigInt
+  codigo_venta          String                 @unique(map: "codigo_venta") @db.VarChar(50)
+  id_cliente            BigInt?                @db.UnsignedBigInt
+  id_sucursal           BigInt                 @db.UnsignedBigInt
+  id_usuario            BigInt                 @db.UnsignedBigInt
+  id_turno              BigInt                 @db.UnsignedBigInt
+  id_estado             BigInt                 @db.UnsignedBigInt
+  fecha                 DateTime               @default(now()) @db.DateTime(0)
+  subtotal              Decimal                @default(0.00) @db.Decimal(12, 2)
+  descuento             Decimal                @default(0.00) @db.Decimal(12, 2)
+  total                 Decimal                @default(0.00) @db.Decimal(12, 2)
+  observaciones         String?                @db.VarChar(255)
+  comisiones_vendedor   comisiones_vendedor[]
+  pagos                 pagos[]
+  venta_detalle         venta_detalle[]
+  clientes              clientes?              @relation(fields: [id_cliente], references: [id_cliente], onDelete: Restrict, onUpdate: Restrict, map: "ventas_ibfk_1")
+  sucursales            sucursales             @relation(fields: [id_sucursal], references: [id_sucursal], onUpdate: Restrict, map: "ventas_ibfk_2")
+  usuarios              usuarios               @relation(fields: [id_usuario], references: [id_usuario], onUpdate: Restrict, map: "ventas_ibfk_3")
+  caja_turnos           caja_turnos            @relation(fields: [id_turno], references: [id_turno], onUpdate: Restrict, map: "ventas_ibfk_4")
+  estados_sistema       estados_sistema        @relation(fields: [id_estado], references: [id_estado], onUpdate: Restrict, map: "ventas_ibfk_5")
+  ventas_financiamiento ventas_financiamiento?
+
+  @@index([id_turno], map: "id_turno")
+  @@index([id_cliente], map: "idx_ventas_cliente")
+  @@index([codigo_venta], map: "idx_ventas_codigo")
+  @@index([id_estado], map: "idx_ventas_estado")
+  @@index([fecha], map: "idx_ventas_fecha")
+  @@index([id_sucursal], map: "idx_ventas_sucursal")
+  @@index([id_usuario], map: "idx_ventas_usuario")
+}
+
+model ventas_financiamiento {
+  id_venta_financiamiento      BigInt                         @id @default(autoincrement()) @db.UnsignedBigInt
+  id_venta                     BigInt                         @unique(map: "id_venta") @db.UnsignedBigInt
+  id_plan                      BigInt                         @db.UnsignedBigInt
+  monto_financiado             Decimal                        @db.Decimal(12, 2)
+  enganche                     Decimal                        @default(0.00) @db.Decimal(12, 2)
+  saldo_financiado             Decimal                        @db.Decimal(12, 2)
+  fecha_inicio                 DateTime                       @db.Date
+  fecha_fin_estimada           DateTime                       @db.Date
+  dia_pago                     Int                            @default(1)
+  id_estado                    BigInt                         @db.UnsignedBigInt
+  observaciones                String?                        @db.VarChar(255)
+  created_at                   DateTime?                      @default(now()) @db.Timestamp(0)
+  updated_at                   DateTime?                      @db.Timestamp(0)
+  historial_crediticio_cliente historial_crediticio_cliente[]
+  venta_cuotas                 venta_cuotas[]
+  ventas                       ventas                         @relation(fields: [id_venta], references: [id_venta], onUpdate: Restrict, map: "ventas_financiamiento_ibfk_1")
+  planes_financiamiento        planes_financiamiento          @relation(fields: [id_plan], references: [id_plan], onUpdate: Restrict, map: "ventas_financiamiento_ibfk_2")
+  estados_sistema              estados_sistema                @relation(fields: [id_estado], references: [id_estado], onUpdate: Restrict, map: "ventas_financiamiento_ibfk_3")
+
+  @@index([id_estado], map: "id_estado")
+  @@index([id_plan], map: "id_plan")
+  @@index([id_venta], map: "idx_ventas_financiamiento_venta")
+}
+
+enum tipos_evento_auditoria_nivel_riesgo {
+  BAJO
+  MEDIO
+  ALTO
+  CRITICO
+}
