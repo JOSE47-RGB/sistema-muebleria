@@ -19,6 +19,9 @@ import Ventas from "./pages/Ventas";
 import Documentos from "./pages/Documentos";
 import DocumentoDetalle from "./pages/DocumentoDetalle";
 
+import Apartados from "./pages/Apartados";
+import ApartadoDetalle from "./pages/ApartadoDetalle";
+
 function App() {
   return (
     <BrowserRouter>
@@ -148,6 +151,23 @@ function App() {
   element={
     <RutaPrivada permisoRuta="/documentos">
       <DocumentoDetalle />
+    </RutaPrivada>
+  }
+/>
+<Route
+  path="/apartados"
+  element={
+    <RutaPrivada permisoRuta="/apartados">
+      <Apartados />
+    </RutaPrivada>
+  }
+/>
+
+<Route
+  path="/apartados/:id"
+  element={
+    <RutaPrivada permisoRuta="/apartados">
+      <ApartadoDetalle />
     </RutaPrivada>
   }
 />

@@ -21,6 +21,8 @@ import { CommonModule } from './common/common.module';
 import { VentasModule } from './ventas/ventas.module';
 import { DocumentosModule } from './documentos/documentos.module';
 
+import { ApartadosModule } from './apartados/apartados.module';
+
 @Module({
   imports: [
     JwtConfigModule,
@@ -39,6 +41,7 @@ import { DocumentosModule } from './documentos/documentos.module';
     ClientesModule,
     VentasModule,
     DocumentosModule,
+     ApartadosModule,
   ],
   controllers: [AppController],
   providers: [AppService],
