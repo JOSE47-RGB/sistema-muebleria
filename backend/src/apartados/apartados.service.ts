@@ -59,6 +59,62 @@ export class ApartadosService {
     return tokenNormalizado;
   }
 
+  private validarFecha(
+    fecha: string | null | undefined,
+    nombre: string,
+  ) {
+    const valor = fecha?.trim();
+
+    if (
+      !valor ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(valor)
+    ) {
+      throw new BadRequestException(
+        `${nombre} es inválida`,
+      );
+    }
+
+    const fechaInterpretada = new Date(
+      `${valor}T00:00:00`,
+    );
+
+    if (
+      Number.isNaN(fechaInterpretada.getTime())
+    ) {
+      throw new BadRequestException(
+        `${nombre} es inválida`,
+      );
+    }
+
+    return valor;
+  }
+
+  private async obtenerConfiguracionNumero(
+    clave: string,
+    valorPredeterminado: number,
+  ) {
+    const configuraciones: any[] =
+      await this.prisma.$queryRaw`
+        SELECT valor
+        FROM configuraciones
+        WHERE clave = ${clave}
+          AND estado = 1
+        LIMIT 1
+      `;
+
+    if (configuraciones.length === 0) {
+      return valorPredeterminado;
+    }
+
+    const valor = Number(
+      configuraciones[0].valor,
+    );
+
+    return Number.isFinite(valor)
+      ? valor
+      : valorPredeterminado;
+  }
+
   private async obtenerContextoUsuario(
     idUsuario: number,
   ): Promise<ContextoUsuario> {
@@ -231,6 +287,18 @@ export class ApartadosService {
         ORDER BY id_metodo_pago
       `;
 
+    const porcentajeMinimoEntrega =
+      await this.obtenerConfiguracionNumero(
+        'APARTADO_PORCENTAJE_MINIMO_ENTREGA',
+        85,
+      );
+
+    const maximoCuotas =
+      await this.obtenerConfiguracionNumero(
+        'APARTADO_MAXIMO_CUOTAS',
+        24,
+      );
+
     return {
       sucursal: {
         id_sucursal: usuario.id_sucursal,
@@ -240,7 +308,26 @@ export class ApartadosService {
       turno,
 
       politica: {
-        porcentaje_minimo_entrega: 85,
+        porcentaje_minimo_entrega:
+          porcentajeMinimoEntrega,
+        maximo_cuotas: maximoCuotas,
+        frecuencias_pago: [
+          {
+            codigo: 'SEMANAL',
+            nombre: 'Semanal',
+            dias_aproximados: 7,
+          },
+          {
+            codigo: 'QUINCENAL',
+            nombre: 'Quincenal',
+            dias_aproximados: 15,
+          },
+          {
+            codigo: 'MENSUAL',
+            nombre: 'Mensual',
+            dias_aproximados: 30,
+          },
+        ],
       },
 
       clientes: clientes.map((cliente) => ({
@@ -301,6 +388,12 @@ export class ApartadosService {
     const usuario =
       await this.obtenerContextoUsuario(idUsuario);
 
+    const porcentajeMinimoEntrega =
+      await this.obtenerConfiguracionNumero(
+        'APARTADO_PORCENTAJE_MINIMO_ENTREGA',
+        85,
+      );
+
     let sql = `
       SELECT
         a.id_apartado,
@@ -336,7 +429,7 @@ export class ApartadosService {
             (
               a.total - a.saldo_pendiente
             ) / NULLIF(a.total, 0)
-          ) * 100 >= 85 THEN 1
+          ) * 100 >= ? THEN 1
           ELSE 0
         END AS elegible_entrega
       FROM apartados a
@@ -350,6 +443,7 @@ export class ApartadosService {
     `;
 
     const parametros: unknown[] = [
+      porcentajeMinimoEntrega,
       usuario.id_sucursal,
     ];
 
@@ -463,6 +557,9 @@ export class ApartadosService {
           a.total,
           a.enganche,
           a.saldo_pendiente,
+          a.cantidad_cuotas,
+          a.frecuencia_pago,
+          a.fecha_primer_pago,
           a.entregado,
           a.fecha_entrega,
           a.observaciones,
@@ -563,6 +660,17 @@ export class ApartadosService {
       apartado.porcentaje_pagado,
     );
 
+    const porcentajeMinimoEntrega =
+      await this.obtenerConfiguracionNumero(
+        'APARTADO_PORCENTAJE_MINIMO_ENTREGA',
+        85,
+      );
+
+    const cuotas = await this.listarCuotas(
+      idApartado,
+      idUsuario,
+    );
+
     return {
       id_apartado: Number(
         apartado.id_apartado,
@@ -578,12 +686,19 @@ export class ApartadosService {
       total,
       enganche: Number(apartado.enganche),
       saldo_pendiente: saldo,
+      cantidad_cuotas: apartado.cantidad_cuotas
+        ? Number(apartado.cantidad_cuotas)
+        : null,
+      frecuencia_pago:
+        apartado.frecuencia_pago,
+      fecha_primer_pago:
+        apartado.fecha_primer_pago,
       total_pagado: Number(
         (total - saldo).toFixed(2),
       ),
       porcentaje_pagado: porcentaje,
       elegible_entrega:
-        porcentaje >= 85,
+        porcentaje >= porcentajeMinimoEntrega,
       entregado: Number(apartado.entregado),
       fecha_entrega: apartado.fecha_entrega,
       observaciones: apartado.observaciones,
@@ -625,6 +740,8 @@ export class ApartadosService {
         subtotal: Number(detalle.subtotal),
       })),
 
+      cuotas,
+
       pagos: pagos.map((pago) => ({
         id_pago: Number(pago.id_pago),
         token_operacion:
@@ -640,6 +757,98 @@ export class ApartadosService {
         fecha: pago.fecha,
       })),
     };
+  }
+
+  async listarCuotas(
+    idApartado: number,
+    idUsuario: number,
+  ) {
+    this.validarId(
+      idApartado,
+      'Identificador de apartado inválido',
+    );
+
+    const contexto =
+      await this.obtenerContextoUsuario(idUsuario);
+
+    const existe: any[] =
+      await this.prisma.$queryRaw`
+        SELECT id_apartado
+        FROM apartados
+        WHERE id_apartado = ${idApartado}
+          AND id_sucursal =
+              ${contexto.id_sucursal}
+        LIMIT 1
+      `;
+
+    if (existe.length === 0) {
+      throw new NotFoundException(
+        'Apartado no encontrado',
+      );
+    }
+
+    const cuotas: any[] =
+      await this.prisma.$queryRaw`
+        SELECT
+          vc.id_cuota,
+          vc.numero_cuota,
+          vc.fecha_vencimiento,
+          vc.monto_programado,
+          vc.monto_pagado,
+          vc.saldo,
+          vc.interes_mora,
+          vc.dias_atraso,
+          es.codigo AS codigo_estado,
+          es.nombre AS estado,
+          CASE
+            WHEN vc.saldo <= 0 THEN 'PAGADA'
+            WHEN vc.fecha_vencimiento < CURDATE()
+                 AND vc.saldo > 0 THEN 'VENCIDA'
+            WHEN vc.monto_pagado > 0
+                 AND vc.saldo > 0 THEN 'PARCIAL'
+            ELSE 'PENDIENTE'
+          END AS estado_calculado,
+          DATEDIFF(
+            vc.fecha_vencimiento,
+            CURDATE()
+          ) AS dias_para_vencer
+        FROM venta_cuotas vc
+        INNER JOIN estados_sistema es
+          ON es.id_estado = vc.id_estado
+        WHERE vc.tipo_origen = 'APARTADO'
+          AND vc.id_apartado = ${idApartado}
+        ORDER BY vc.numero_cuota
+      `;
+
+    return cuotas.map((cuota) => ({
+      id_cuota: Number(cuota.id_cuota),
+      numero_cuota: Number(
+        cuota.numero_cuota,
+      ),
+      fecha_vencimiento:
+        cuota.fecha_vencimiento,
+      monto_programado: Number(
+        cuota.monto_programado,
+      ),
+      monto_pagado: Number(
+        cuota.monto_pagado,
+      ),
+      saldo: Number(cuota.saldo),
+      interes_mora: Number(
+        cuota.interes_mora,
+      ),
+      dias_atraso: Number(
+        cuota.dias_atraso,
+      ),
+      dias_para_vencer: Number(
+        cuota.dias_para_vencer,
+      ),
+      codigo_estado:
+        cuota.codigo_estado,
+      estado: cuota.estado,
+      estado_calculado:
+        cuota.estado_calculado,
+    }));
   }
 
   private async buscarPorToken(
@@ -692,6 +901,26 @@ export class ApartadosService {
     );
     const enganche = Number(data.enganche);
 
+    const cantidadCuotas = Number(
+      data.cantidad_cuotas,
+    );
+
+    const frecuenciaPago =
+      data.frecuencia_pago
+        ?.trim()
+        .toUpperCase();
+
+    const fechaPrimerPago = this.validarFecha(
+      data.fecha_primer_pago,
+      'La fecha del primer pago',
+    );
+
+    const maximoCuotas =
+      await this.obtenerConfiguracionNumero(
+        'APARTADO_MAXIMO_CUOTAS',
+        24,
+      );
+
     this.validarId(
       idCliente,
       'Debes seleccionar un cliente',
@@ -712,23 +941,33 @@ export class ApartadosService {
     }
 
     if (
+      !Number.isInteger(cantidadCuotas) ||
+      cantidadCuotas < 1 ||
+      cantidadCuotas > maximoCuotas
+    ) {
+      throw new BadRequestException(
+        `La cantidad de cuotas debe estar entre 1 y ${maximoCuotas}`,
+      );
+    }
+
+    if (
+      ![
+        'SEMANAL',
+        'QUINCENAL',
+        'MENSUAL',
+      ].includes(frecuenciaPago)
+    ) {
+      throw new BadRequestException(
+        'La frecuencia de pago es inválida',
+      );
+    }
+
+    if (
       !Array.isArray(data.detalles) ||
       data.detalles.length === 0
     ) {
       throw new BadRequestException(
         'El apartado debe contener productos',
-      );
-    }
-
-    const fechaLimite =
-      data.fecha_limite?.trim() || null;
-
-    if (
-      fechaLimite &&
-      !/^\d{4}-\d{2}-\d{2}$/.test(fechaLimite)
-    ) {
-      throw new BadRequestException(
-        'La fecha límite es inválida',
       );
     }
 
@@ -978,6 +1217,9 @@ export class ApartadosService {
                 total,
                 enganche,
                 saldo_pendiente,
+                cantidad_cuotas,
+                frecuencia_pago,
+                fecha_primer_pago,
                 entregado,
                 fecha_limite,
                 observaciones
@@ -995,8 +1237,11 @@ export class ApartadosService {
                 ${total},
                 ${enganche},
                 ${saldoPendiente},
+                ${cantidadCuotas},
+                ${frecuenciaPago},
+                ${fechaPrimerPago},
                 0,
-                ${fechaLimite},
+                NULL,
                 ${
                   data.observaciones?.trim() ||
                   null
@@ -1177,6 +1422,14 @@ export class ApartadosService {
                 idMetodoPago,
               },
             );
+
+            if (saldoPendiente > 0) {
+              await tx.$executeRaw`
+                CALL sp_generar_cuotas_apartado(
+                  ${nuevoId}
+                )
+              `;
+            }
 
             return nuevoId;
           },
@@ -1410,6 +1663,22 @@ export class ApartadosService {
             resultadoPago[0]?.id_pago,
           );
 
+          if (
+            !Number.isInteger(idPago) ||
+            idPago <= 0
+          ) {
+            throw new BadRequestException(
+              'No fue posible identificar el pago',
+            );
+          }
+
+          await tx.$executeRaw`
+            CALL sp_aplicar_pago_apartado(
+              ${idApartado},
+              ${idPago}
+            )
+          `;
+
           await tx.$executeRaw`
             UPDATE apartados
             SET saldo_pendiente =
@@ -1521,6 +1790,12 @@ export class ApartadosService {
     const contexto =
       await this.obtenerContextoUsuario(idUsuario);
 
+    const porcentajeMinimoEntrega =
+      await this.obtenerConfiguracionNumero(
+        'APARTADO_PORCENTAJE_MINIMO_ENTREGA',
+        85,
+      );
+
     await this.prisma.$transaction(
       async (tx) => {
         const apartados: any[] =
@@ -1573,11 +1848,13 @@ export class ApartadosService {
         const porcentaje =
           ((total - saldo) / total) * 100;
 
-        if (porcentaje < 85) {
+        if (
+          porcentaje < porcentajeMinimoEntrega
+        ) {
           throw new BadRequestException(
             `El cliente ha pagado ${porcentaje.toFixed(
               2,
-            )}%. Debe alcanzar al menos el 85%`,
+            )}%. Debe alcanzar al menos el ${porcentajeMinimoEntrega}%`,
           );
         }
 
@@ -1894,6 +2171,35 @@ export class ApartadosService {
               ${`Cancelado: ${motivo}`}
             )
           WHERE id_apartado = ${idApartado}
+        `;
+
+        const estadoCuotaCancelada: any[] =
+          await tx.$queryRaw`
+            SELECT id_estado
+            FROM estados_sistema
+            WHERE modulo = 'CUOTA'
+              AND codigo = 'CANCELADA'
+              AND estado = 1
+            LIMIT 1
+          `;
+
+        if (
+          estadoCuotaCancelada.length === 0
+        ) {
+          throw new BadRequestException(
+            'No existe el estado CUOTA/CANCELADA',
+          );
+        }
+
+        await tx.$executeRaw`
+          UPDATE venta_cuotas
+          SET id_estado =
+              ${Number(
+                estadoCuotaCancelada[0].id_estado,
+              )}
+          WHERE tipo_origen = 'APARTADO'
+            AND id_apartado = ${idApartado}
+            AND saldo > 0
         `;
       },
       {
@@ -2339,6 +2645,36 @@ export class ApartadosService {
     ) {
       throw new BadRequestException(
         'Los totales o cantidades del apartado son inválidos',
+      );
+    }
+
+    if (
+      mensaje.includes(
+        'CUOTAS_YA_GENERADAS',
+      )
+    ) {
+      throw new BadRequestException(
+        'El calendario de cuotas ya fue generado',
+      );
+    }
+
+    if (
+      mensaje.includes(
+        'PAGO_YA_APLICADO',
+      )
+    ) {
+      throw new BadRequestException(
+        'El pago ya fue aplicado a las cuotas',
+      );
+    }
+
+    if (
+      mensaje.includes(
+        'PAGO_SUPERA_SALDO',
+      )
+    ) {
+      throw new BadRequestException(
+        'El abono supera el saldo pendiente de las cuotas',
       );
     }
 

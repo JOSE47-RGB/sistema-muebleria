@@ -61,6 +61,23 @@ export class ApartadosController {
     );
   }
 
+  /*
+   * Esta ruta debe ir antes de @Get(':id').
+   * Permite consultar el calendario de pagos:
+   * GET /apartados/1/cuotas
+   */
+  @Get(':id/cuotas')
+  @Permiso('apartados.ver')
+  listarCuotas(
+    @Req() request: RequestConUsuario,
+    @Param('id') id: string,
+  ) {
+    return this.apartadosService.listarCuotas(
+      Number(id),
+      Number(request.user.sub),
+    );
+  }
+
   @Get(':id')
   @Permiso('apartados.ver')
   obtener(

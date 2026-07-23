@@ -1,3 +1,8 @@
+export type FrecuenciaPagoApartado =
+  | 'SEMANAL'
+  | 'QUINCENAL'
+  | 'MENSUAL';
+
 export class CreateApartadoDetalleDto {
   id_variante!: number;
   cantidad!: number;
@@ -10,7 +15,11 @@ export class CreateApartadoDto {
   id_metodo_pago!: number;
 
   enganche!: number;
-  fecha_limite?: string | null;
+
+  cantidad_cuotas!: number;
+  frecuencia_pago!: FrecuenciaPagoApartado;
+  fecha_primer_pago!: string;
+
   referencia_pago?: string | null;
   observaciones?: string | null;
 

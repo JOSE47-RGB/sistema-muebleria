@@ -72,6 +72,12 @@ type CatalogosApartado = {
 
   politica: {
     porcentaje_minimo_entrega: number;
+    maximo_cuotas: number;
+    frecuencias_pago: Array<{
+      codigo: "SEMANAL" | "QUINCENAL" | "MENSUAL";
+      nombre: string;
+      dias_aproximados: number;
+    }>;
   };
 
   clientes: Cliente[];
@@ -121,9 +127,38 @@ type ApartadoExitoso = {
   saldo_pendiente: number;
 };
 
-const fechaLocalIso = () => {
+const fechaPrimerPagoPredeterminada = () => {
   const fecha = new Date();
   fecha.setDate(fecha.getDate() + 30);
+
+  return fecha.toISOString().slice(0, 10);
+};
+
+type FrecuenciaPago =
+  | "SEMANAL"
+  | "QUINCENAL"
+  | "MENSUAL";
+
+type CuotaSimulada = {
+  numero_cuota: number;
+  fecha_vencimiento: string;
+  monto_programado: number;
+};
+
+const sumarFrecuencia = (
+  fechaIso: string,
+  frecuencia: FrecuenciaPago,
+  saltos: number,
+) => {
+  const fecha = new Date(`${fechaIso}T00:00:00`);
+
+  if (frecuencia === "SEMANAL") {
+    fecha.setDate(fecha.getDate() + 7 * saltos);
+  } else if (frecuencia === "QUINCENAL") {
+    fecha.setDate(fecha.getDate() + 15 * saltos);
+  } else {
+    fecha.setMonth(fecha.getMonth() + saltos);
+  }
 
   return fecha.toISOString().slice(0, 10);
 };
@@ -155,8 +190,14 @@ export default function Apartados() {
   const [enganche, setEnganche] =
     useState("");
 
-  const [fechaLimite, setFechaLimite] =
-    useState(fechaLocalIso());
+  const [cantidadCuotas, setCantidadCuotas] =
+    useState(1);
+
+  const [frecuenciaPago, setFrecuenciaPago] =
+    useState<FrecuenciaPago>("MENSUAL");
+
+  const [fechaPrimerPago, setFechaPrimerPago] =
+    useState(fechaPrimerPagoPredeterminada());
 
   const [referenciaPago, setReferenciaPago] =
     useState("");
@@ -194,6 +235,28 @@ export default function Apartados() {
     const datos = respuesta.data;
 
     setCatalogos(datos);
+
+    setCantidadCuotas((actual) => {
+      const maximo = Math.max(
+        1,
+        Number(datos.politica?.maximo_cuotas || 24),
+      );
+
+      return Math.min(Math.max(actual, 1), maximo);
+    });
+
+    const frecuencias =
+      datos.politica?.frecuencias_pago || [];
+
+    if (
+      !frecuencias.some(
+        (item) => item.codigo === frecuenciaPago,
+      )
+    ) {
+      setFrecuenciaPago(
+        frecuencias[0]?.codigo || "MENSUAL",
+      );
+    }
 
     setIdCliente((actual) => {
       const existe = datos.clientes.some(
@@ -357,6 +420,57 @@ export default function Apartados() {
         )
       : 0;
 
+  const calendarioSimulado = useMemo<
+    CuotaSimulada[]
+  >(() => {
+    if (
+      saldoPendiente <= 0 ||
+      cantidadCuotas <= 0 ||
+      !fechaPrimerPago
+    ) {
+      return [];
+    }
+
+    const montoBase = Math.floor(
+      (saldoPendiente / cantidadCuotas) * 100,
+    ) / 100;
+
+    let acumulado = 0;
+
+    return Array.from(
+      { length: cantidadCuotas },
+      (_, indice) => {
+        const esUltima =
+          indice === cantidadCuotas - 1;
+
+        const monto = esUltima
+          ? Number(
+              (saldoPendiente - acumulado).toFixed(2),
+            )
+          : montoBase;
+
+        acumulado = Number(
+          (acumulado + monto).toFixed(2),
+        );
+
+        return {
+          numero_cuota: indice + 1,
+          fecha_vencimiento: sumarFrecuencia(
+            fechaPrimerPago,
+            frecuenciaPago,
+            indice,
+          ),
+          monto_programado: monto,
+        };
+      },
+    );
+  }, [
+    saldoPendiente,
+    cantidadCuotas,
+    frecuenciaPago,
+    fechaPrimerPago,
+  ]);
+
   const agregarProducto = () => {
     const producto =
       catalogos?.productos.find(
@@ -489,7 +603,11 @@ export default function Apartados() {
   const limpiarFormulario = () => {
     setCarrito([]);
     setEnganche("");
-    setFechaLimite(fechaLocalIso());
+    setCantidadCuotas(1);
+    setFrecuenciaPago("MENSUAL");
+    setFechaPrimerPago(
+      fechaPrimerPagoPredeterminada(),
+    );
     setReferenciaPago("");
     setObservaciones("");
     setBusquedaProducto("");
@@ -543,6 +661,38 @@ export default function Apartados() {
       return;
     }
 
+    const maximoCuotas = Math.max(
+      1,
+      Number(
+        catalogos?.politica?.maximo_cuotas || 24,
+      ),
+    );
+
+    if (
+      !Number.isInteger(cantidadCuotas) ||
+      cantidadCuotas < 1 ||
+      cantidadCuotas > maximoCuotas
+    ) {
+      alert(
+        `La cantidad de cuotas debe estar entre 1 y ${maximoCuotas}`,
+      );
+      return;
+    }
+
+    if (
+      !["SEMANAL", "QUINCENAL", "MENSUAL"].includes(
+        frecuenciaPago,
+      )
+    ) {
+      alert("Seleccione una frecuencia de pago");
+      return;
+    }
+
+    if (!fechaPrimerPago) {
+      alert("Seleccione la fecha del primer pago");
+      return;
+    }
+
     if (
       metodoSeleccionado
         ?.requiere_referencia === 1 &&
@@ -577,8 +727,9 @@ export default function Apartados() {
         id_cliente: idCliente,
         id_metodo_pago: idMetodoPago,
         enganche: engancheNumero,
-        fecha_limite:
-          fechaLimite || null,
+        cantidad_cuotas: cantidadCuotas,
+        frecuencia_pago: frecuenciaPago,
+        fecha_primer_pago: fechaPrimerPago,
         referencia_pago:
           referenciaPago.trim() || null,
         observaciones:
@@ -972,16 +1123,114 @@ export default function Apartados() {
               </div>
 
               <Input
-                label="Fecha límite"
-                type="date"
-                value={fechaLimite}
-                disabled={guardando}
+                label="Cantidad de cuotas"
+                type="number"
+                min={1}
+                max={
+                  catalogos?.politica
+                    .maximo_cuotas || 24
+                }
+                step={1}
+                value={cantidadCuotas}
+                disabled={
+                  guardando ||
+                  saldoPendiente <= 0
+                }
                 onChange={(e) =>
-                  setFechaLimite(
+                  setCantidadCuotas(
+                    Math.max(
+                      1,
+                      Number(e.target.value),
+                    ),
+                  )
+                }
+              />
+
+              <Select
+                label="Frecuencia de pago"
+                value={frecuenciaPago}
+                disabled={
+                  guardando ||
+                  saldoPendiente <= 0
+                }
+                onChange={(e) =>
+                  setFrecuenciaPago(
+                    e.target.value as FrecuenciaPago,
+                  )
+                }
+              >
+                {(
+                  catalogos?.politica
+                    .frecuencias_pago || []
+                ).map((frecuencia) => (
+                  <option
+                    key={frecuencia.codigo}
+                    value={frecuencia.codigo}
+                  >
+                    {frecuencia.nombre}
+                  </option>
+                ))}
+              </Select>
+
+              <Input
+                label="Fecha del primer pago"
+                type="date"
+                value={fechaPrimerPago}
+                disabled={
+                  guardando ||
+                  saldoPendiente <= 0
+                }
+                onChange={(e) =>
+                  setFechaPrimerPago(
                     e.target.value,
                   )
                 }
               />
+
+              {calendarioSimulado.length > 0 && (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="mb-3 flex items-center justify-between">
+                    <p className="font-bold text-slate-800">
+                      Calendario estimado
+                    </p>
+
+                    <span className="text-xs text-slate-500">
+                      {calendarioSimulado.length} cuotas
+                    </span>
+                  </div>
+
+                  <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
+                    {calendarioSimulado.map(
+                      (cuota) => (
+                        <div
+                          key={cuota.numero_cuota}
+                          className="flex items-center justify-between rounded-lg bg-white px-3 py-2 text-sm shadow-sm"
+                        >
+                          <div>
+                            <p className="font-semibold">
+                              Cuota{" "}
+                              {cuota.numero_cuota}
+                            </p>
+
+                            <p className="text-xs text-slate-500">
+                              {new Date(
+                                `${cuota.fecha_vencimiento}T00:00:00`,
+                              ).toLocaleDateString()}
+                            </p>
+                          </div>
+
+                          <p className="font-bold text-slate-800">
+                            Q
+                            {cuota.monto_programado.toFixed(
+                              2,
+                            )}
+                          </p>
+                        </div>
+                      ),
+                    )}
+                  </div>
+                </div>
+              )}
 
               <Select
                 label="Método de pago"
@@ -1051,7 +1300,9 @@ export default function Apartados() {
                 carrito.length === 0 ||
                 idCliente <= 0 ||
                 idMetodoPago <= 0 ||
-                engancheNumero > total
+                engancheNumero > total ||
+                cantidadCuotas < 1 ||
+                !fechaPrimerPago
               }
               onClick={guardarApartado}
             >

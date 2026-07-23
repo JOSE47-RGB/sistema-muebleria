@@ -23,6 +23,10 @@ import BotonPrimario from "../components/BotonPrimario";
 import BotonSecundario from "../components/BotonSecundario";
 import BarraProgresoApartado from "../components/BarraProgresoApartado";
 
+import ReciboApartado from "../components/ReciboApartado";
+import ReciboAbono from "../components/ReciboAbono";
+
+
 type DetalleApartado = {
   id_apartado: number;
   codigo_apartado: string;
@@ -31,6 +35,13 @@ type DetalleApartado = {
   total: number;
   enganche: number;
   saldo_pendiente: number;
+  cantidad_cuotas: number | null;
+  frecuencia_pago:
+    | "SEMANAL"
+    | "QUINCENAL"
+    | "MENSUAL"
+    | null;
+  fecha_primer_pago: string | null;
   total_pagado: number;
   porcentaje_pagado: number;
   elegible_entrega: boolean;
@@ -65,6 +76,26 @@ type DetalleApartado = {
     subtotal: number;
   }>;
 
+  cuotas: Array<{
+    id_cuota: number;
+    numero_cuota: number;
+    fecha_vencimiento: string;
+    monto_programado: number;
+    monto_pagado: number;
+    saldo: number;
+    interes_mora: number;
+    dias_atraso: number;
+    dias_para_vencer: number;
+    codigo_estado: string;
+    estado: string;
+    estado_calculado:
+      | "PENDIENTE"
+      | "PARCIAL"
+      | "PAGADA"
+      | "VENCIDA"
+      | "CANCELADA";
+  }>;
+
   pagos: Array<{
     id_pago: number;
     token_operacion: string | null;
@@ -85,8 +116,14 @@ type MetodoPago = {
 };
 
 type CatalogosApartado = {
+  politica: {
+    porcentaje_minimo_entrega: number;
+    maximo_cuotas: number;
+  };
   metodos_pago: MetodoPago[];
 };
+
+type PagoApartado = DetalleApartado["pagos"][number];
 
 export default function ApartadoDetalle() {
   const navigate = useNavigate();
@@ -97,6 +134,11 @@ export default function ApartadoDetalle() {
 
   const [metodosPago, setMetodosPago] =
     useState<MetodoPago[]>([]);
+
+  const [
+    porcentajeMinimoEntrega,
+    setPorcentajeMinimoEntrega,
+  ] = useState(85);
 
   const [idMetodoPago, setIdMetodoPago] =
     useState(0);
@@ -118,6 +160,12 @@ export default function ApartadoDetalle() {
 
   const [tokenAbono, setTokenAbono] =
     useState(() => crypto.randomUUID());
+
+  const [mostrarReciboApartado, setMostrarReciboApartado] =
+    useState(false);
+
+  const [pagoSeleccionado, setPagoSeleccionado] =
+    useState<PagoApartado | null>(null);
 
   const cargar = async () => {
     try {
@@ -143,6 +191,13 @@ export default function ApartadoDetalle() {
         [];
 
       setMetodosPago(metodos);
+
+      setPorcentajeMinimoEntrega(
+        Number(
+          respuestaCatalogos.data.politica
+            ?.porcentaje_minimo_entrega || 85,
+        ),
+      );
 
       setIdMetodoPago((actual) => {
         const existe = metodos.some(
@@ -179,6 +234,73 @@ export default function ApartadoDetalle() {
       ) || null,
     [metodosPago, idMetodoPago],
   );
+
+  const imprimirVale = () => {
+    if (!apartado) {
+      return;
+    }
+
+    setMostrarReciboApartado(true);
+  };
+
+  const imprimirRecibo = (
+    pago: PagoApartado,
+  ) => {
+    setPagoSeleccionado(pago);
+  };
+
+  const obtenerSaldosPago = (
+    pago: PagoApartado,
+  ) => {
+    if (!apartado) {
+      return {
+        saldoAnterior: 0,
+        saldoNuevo: 0,
+      };
+    }
+
+    const pagosOrdenados = [...apartado.pagos].sort(
+      (a, b) =>
+        new Date(a.fecha).getTime() -
+          new Date(b.fecha).getTime() ||
+        a.id_pago - b.id_pago,
+    );
+
+    let acumuladoAnterior = 0;
+
+    for (const item of pagosOrdenados) {
+      if (item.id_pago === pago.id_pago) {
+        break;
+      }
+
+      acumuladoAnterior += Number(item.monto);
+    }
+
+    const saldoAnterior = Math.max(
+      0,
+      Number(
+        (
+          apartado.total -
+          acumuladoAnterior
+        ).toFixed(2),
+      ),
+    );
+
+    const saldoNuevo = Math.max(
+      0,
+      Number(
+        (
+          saldoAnterior -
+          Number(pago.monto)
+        ).toFixed(2),
+      ),
+    );
+
+    return {
+      saldoAnterior,
+      saldoNuevo,
+    };
+  };
 
   const registrarAbono = async () => {
     if (!apartado || procesando) {
@@ -381,14 +503,23 @@ export default function ApartadoDetalle() {
           descripcion="Detalle, pagos, productos reservados y entrega."
         />
 
-        <BotonSecundario
-          type="button"
-          onClick={() =>
-            navigate("/apartados")
-          }
-        >
-          Regresar
-        </BotonSecundario>
+        <div className="flex flex-wrap gap-3">
+          <BotonPrimario
+            type="button"
+            onClick={imprimirVale}
+          >
+            Imprimir vale / PDF
+          </BotonPrimario>
+
+          <BotonSecundario
+            type="button"
+            onClick={() =>
+              navigate("/apartados")
+            }
+          >
+            Regresar
+          </BotonSecundario>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
@@ -476,6 +607,32 @@ export default function ApartadoDetalle() {
 
               <div>
                 <p className="text-sm text-slate-500">
+                  Plan de pagos
+                </p>
+
+                <p className="font-semibold">
+                  {apartado.cantidad_cuotas || 0}{" "}
+                  cuotas -{" "}
+                  {apartado.frecuencia_pago || "-"}
+                </p>
+              </div>
+
+              <div>
+                <p className="text-sm text-slate-500">
+                  Primer pago
+                </p>
+
+                <p className="font-semibold">
+                  {apartado.fecha_primer_pago
+                    ? new Date(
+                        `${apartado.fecha_primer_pago}T00:00:00`,
+                      ).toLocaleDateString()
+                    : "-"}
+                </p>
+              </div>
+
+              <div>
+                <p className="text-sm text-slate-500">
                   Sucursal
                 </p>
 
@@ -557,6 +714,69 @@ export default function ApartadoDetalle() {
 
           <div>
             <h2 className="mb-3 text-xl font-bold">
+              Calendario de cuotas
+            </h2>
+
+            <Tabla
+              datos={apartado.cuotas || []}
+              mensajeVacio="No existen cuotas programadas"
+              columnas={[
+                {
+                  titulo: "Cuota",
+                  render: (cuota) =>
+                    `${cuota.numero_cuota} de ${
+                      apartado.cantidad_cuotas || 0
+                    }`,
+                },
+                {
+                  titulo: "Vencimiento",
+                  render: (cuota) =>
+                    new Date(
+                      `${cuota.fecha_vencimiento}T00:00:00`,
+                    ).toLocaleDateString(),
+                },
+                {
+                  titulo: "Programado",
+                  render: (cuota) =>
+                    `Q${cuota.monto_programado.toFixed(
+                      2,
+                    )}`,
+                },
+                {
+                  titulo: "Pagado",
+                  render: (cuota) =>
+                    `Q${cuota.monto_pagado.toFixed(
+                      2,
+                    )}`,
+                },
+                {
+                  titulo: "Saldo",
+                  render: (cuota) =>
+                    `Q${cuota.saldo.toFixed(2)}`,
+                },
+                {
+                  titulo: "Estado",
+                  render: (cuota) => (
+                    <Badge
+                      texto={cuota.estado_calculado}
+                      tipo={
+                        cuota.estado_calculado ===
+                        "PAGADA"
+                          ? "verde"
+                          : cuota.estado_calculado ===
+                              "VENCIDA"
+                            ? "rojo"
+                            : "amarillo"
+                      }
+                    />
+                  ),
+                },
+              ]}
+            />
+          </div>
+
+          <div>
+            <h2 className="mb-3 text-xl font-bold">
               Historial de abonos
             </h2>
 
@@ -587,6 +807,20 @@ export default function ApartadoDetalle() {
                   titulo: "Referencia",
                   render: (pago) =>
                     pago.referencia || "-",
+                },
+                {
+                  titulo: "Recibo",
+                  render: (pago) => (
+                    <button
+                      type="button"
+                      className="font-semibold text-blue-600 hover:underline"
+                      onClick={() =>
+                        imprimirRecibo(pago)
+                      }
+                    >
+                      Imprimir / PDF
+                    </button>
+                  ),
                 },
               ]}
             />
@@ -724,7 +958,7 @@ export default function ApartadoDetalle() {
 
               <p className="mt-2 text-sm text-green-700">
                 El cliente alcanzó al menos
-                el 85% del total.
+                el {porcentajeMinimoEntrega}% del total.
               </p>
 
               <BotonPrimario
@@ -769,6 +1003,110 @@ export default function ApartadoDetalle() {
             )}
         </div>
       </div>
+
+      {mostrarReciboApartado && (
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/70 p-4 md:p-8"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Vale de apartado"
+        >
+          <div className="w-full max-w-5xl">
+            <div className="print:hidden mb-3 flex justify-end">
+              <button
+                type="button"
+                onClick={() =>
+                  setMostrarReciboApartado(false)
+                }
+                className="rounded-xl bg-white px-4 py-2 font-semibold text-slate-800 shadow hover:bg-slate-100"
+              >
+                Cerrar
+              </button>
+            </div>
+
+            <ReciboApartado
+              codigoApartado={
+                apartado.codigo_apartado
+              }
+              fechaApartado={
+                apartado.fecha_apartado
+              }
+              cliente={apartado.cliente}
+              sucursal={apartado.sucursal}
+              usuario={apartado.usuario}
+              total={apartado.total}
+              enganche={apartado.enganche}
+              saldoPendiente={
+                apartado.saldo_pendiente
+              }
+              cantidadCuotas={
+                apartado.cantidad_cuotas
+              }
+              frecuenciaPago={
+                apartado.frecuencia_pago
+              }
+              fechaPrimerPago={
+                apartado.fecha_primer_pago
+              }
+              detalles={apartado.detalles}
+              cuotas={apartado.cuotas}
+            />
+          </div>
+        </div>
+      )}
+
+      {pagoSeleccionado && (
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/70 p-4 md:p-8"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Recibo de abono"
+        >
+          <div className="w-full max-w-2xl">
+            <div className="print:hidden mb-3 flex justify-end">
+              <button
+                type="button"
+                onClick={() =>
+                  setPagoSeleccionado(null)
+                }
+                className="rounded-xl bg-white px-4 py-2 font-semibold text-slate-800 shadow hover:bg-slate-100"
+              >
+                Cerrar
+              </button>
+            </div>
+
+            {(() => {
+              const {
+                saldoAnterior,
+                saldoNuevo,
+              } = obtenerSaldosPago(
+                pagoSeleccionado,
+              );
+
+              return (
+                <ReciboAbono
+                  codigoApartado={
+                    apartado.codigo_apartado
+                  }
+                  cliente={apartado.cliente}
+                  fecha={pagoSeleccionado.fecha}
+                  metodoPago={
+                    pagoSeleccionado.metodo_pago
+                  }
+                  referencia={
+                    pagoSeleccionado.referencia
+                  }
+                  monto={pagoSeleccionado.monto}
+                  saldoAnterior={saldoAnterior}
+                  saldoNuevo={saldoNuevo}
+                  usuario={apartado.usuario}
+                  sucursal={apartado.sucursal}
+                />
+              );
+            })()}
+          </div>
+        </div>
+      )}
     </Layout>
   );
 }
