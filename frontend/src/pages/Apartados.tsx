@@ -4,7 +4,10 @@ import {
   useState,
 } from "react";
 
-import { useNavigate } from "react-router-dom";
+import {
+  useNavigate,
+  useParams,
+} from "react-router-dom";
 
 import { api } from "../services/api";
 
@@ -18,33 +21,91 @@ import Loader from "../components/Loader";
 import TituloPagina from "../components/TituloPagina";
 import BotonPrimario from "../components/BotonPrimario";
 import BotonSecundario from "../components/BotonSecundario";
-import ModalApartadoExitoso from "../components/ModalApartadoExitoso";
+import BarraProgresoApartado from "../components/BarraProgresoApartado";
 
-type Cliente = {
-  id_cliente: number;
-  codigo_cliente: string;
-  cliente: string;
-  nit: string | null;
-  telefono: string | null;
-  tipo_cliente: string;
-  porcentaje_descuento: number;
-};
+import ReciboApartado from "../components/ReciboApartado";
+import ReciboAbono from "../components/ReciboAbono";
 
-type Producto = {
-  id_variante: number;
-  id_producto: number;
-  codigo_producto: string;
-  producto: string;
-  codigo_variante: string;
-  color: string | null;
-  material: string | null;
-  medida: string | null;
-  precio_venta: number;
-  marca: string;
-  categoria: string;
-  stock_actual: number;
-  stock_reservado: number;
-  stock_disponible: number;
+
+type DetalleApartado = {
+  id_apartado: number;
+  codigo_apartado: string;
+  fecha_apartado: string;
+  fecha_limite: string | null;
+  total: number;
+  enganche: number;
+  saldo_pendiente: number;
+  cantidad_cuotas: number | null;
+  frecuencia_pago:
+    | "SEMANAL"
+    | "QUINCENAL"
+    | "MENSUAL"
+    | null;
+  fecha_primer_pago: string | null;
+  total_pagado: number;
+  porcentaje_pagado: number;
+  elegible_entrega: boolean;
+  entregado: number;
+  fecha_entrega: string | null;
+  observaciones: string | null;
+  codigo_estado: string;
+  estado: string;
+  usuario: string;
+  sucursal: string;
+
+  cliente: {
+    codigo: string;
+    nombre: string;
+    nit: string | null;
+    telefono: string | null;
+    direccion: string | null;
+  };
+
+  detalles: Array<{
+    id_apartado_detalle: number;
+    id_variante: number;
+    codigo_producto: string;
+    producto: string;
+    codigo_variante: string;
+    color: string | null;
+    material: string | null;
+    medida: string | null;
+    cantidad: number;
+    precio_unitario: number;
+    descuento: number;
+    subtotal: number;
+  }>;
+
+  cuotas: Array<{
+    id_cuota: number;
+    numero_cuota: number;
+    fecha_vencimiento: string;
+    monto_programado: number;
+    monto_pagado: number;
+    saldo: number;
+    interes_mora: number;
+    dias_atraso: number;
+    dias_para_vencer: number;
+    codigo_estado: string;
+    estado: string;
+    estado_calculado:
+      | "PENDIENTE"
+      | "PARCIAL"
+      | "PAGADA"
+      | "VENCIDA"
+      | "CANCELADA";
+  }>;
+
+  pagos: Array<{
+    id_pago: number;
+    token_operacion: string | null;
+    id_metodo_pago: number;
+    codigo_metodo: string;
+    metodo_pago: string;
+    monto: number;
+    referencia: string | null;
+    fecha: string;
+  }>;
 };
 
 type MetodoPago = {
@@ -54,649 +115,226 @@ type MetodoPago = {
   requiere_referencia: number;
 };
 
-type CarritoItem = Producto & {
-  cantidad: number;
-};
-
 type CatalogosApartado = {
-  sucursal: {
-    id_sucursal: number;
-    nombre: string;
-  };
-
-  turno: {
-    id_turno: number;
-    id_caja: number;
-    caja: string;
-  } | null;
-
   politica: {
     porcentaje_minimo_entrega: number;
     maximo_cuotas: number;
-    frecuencias_pago: Array<{
-      codigo: "SEMANAL" | "QUINCENAL" | "MENSUAL";
-      nombre: string;
-      dias_aproximados: number;
-    }>;
   };
-
-  clientes: Cliente[];
-  productos: Producto[];
   metodos_pago: MetodoPago[];
 };
 
-type ApartadoListado = {
-  id_apartado: number;
-  codigo_apartado: string;
-  fecha_apartado: string;
-  fecha_limite: string | null;
-  total: number;
-  enganche: number;
-  saldo_pendiente: number;
-  total_pagado: number;
-  porcentaje_pagado: number;
-  entregado: number;
-  fecha_entrega: string | null;
-  elegible_entrega: number;
-  codigo_estado: string;
-  estado: string;
-  codigo_cliente: string;
-  cliente: string;
-  usuario: string;
-};
+type PagoApartado = DetalleApartado["pagos"][number];
 
-type ApartadoCreado = {
-  id_apartado: number;
-  codigo_apartado: string;
-  total: number;
-  enganche: number;
-  saldo_pendiente: number;
-
-  cliente: {
-    codigo: string;
-    nombre: string;
-  };
-};
-
-type ApartadoExitoso = {
-  id_apartado: number;
-  codigo_apartado: string;
-  cliente: string;
-  total: number;
-  enganche: number;
-  saldo_pendiente: number;
-};
-
-const fechaPrimerPagoPredeterminada = () => {
-  const fecha = new Date();
-  fecha.setDate(fecha.getDate() + 30);
-
-  return fecha.toISOString().slice(0, 10);
-};
-
-type FrecuenciaPago =
-  | "SEMANAL"
-  | "QUINCENAL"
-  | "MENSUAL";
-
-type CuotaSimulada = {
-  numero_cuota: number;
-  fecha_vencimiento: string;
-  monto_programado: number;
-};
-
-const sumarFrecuencia = (
-  fechaIso: string,
-  frecuencia: FrecuenciaPago,
-  saltos: number,
-) => {
-  const fecha = new Date(`${fechaIso}T00:00:00`);
-
-  if (frecuencia === "SEMANAL") {
-    fecha.setDate(fecha.getDate() + 7 * saltos);
-  } else if (frecuencia === "QUINCENAL") {
-    fecha.setDate(fecha.getDate() + 15 * saltos);
-  } else {
-    fecha.setMonth(fecha.getMonth() + saltos);
-  }
-
-  return fecha.toISOString().slice(0, 10);
-};
-
-export default function Apartados() {
+export default function ApartadoDetalle() {
   const navigate = useNavigate();
+  const { id } = useParams();
 
-  const [catalogos, setCatalogos] =
-    useState<CatalogosApartado | null>(null);
+  const [apartado, setApartado] =
+    useState<DetalleApartado | null>(null);
 
-  const [apartados, setApartados] =
-    useState<ApartadoListado[]>([]);
+  const [metodosPago, setMetodosPago] =
+    useState<MetodoPago[]>([]);
 
-  const [carrito, setCarrito] =
-    useState<CarritoItem[]>([]);
-
-  const [idCliente, setIdCliente] =
-    useState(0);
-
-  const [idVariante, setIdVariante] =
-    useState(0);
-
-  const [cantidad, setCantidad] =
-    useState(1);
+  const [
+    porcentajeMinimoEntrega,
+    setPorcentajeMinimoEntrega,
+  ] = useState(85);
 
   const [idMetodoPago, setIdMetodoPago] =
     useState(0);
 
-  const [enganche, setEnganche] =
+  const [monto, setMonto] =
     useState("");
 
-  const [cantidadCuotas, setCantidadCuotas] =
-    useState(1);
-
-  const [frecuenciaPago, setFrecuenciaPago] =
-    useState<FrecuenciaPago>("MENSUAL");
-
-  const [fechaPrimerPago, setFechaPrimerPago] =
-    useState(fechaPrimerPagoPredeterminada());
-
-  const [referenciaPago, setReferenciaPago] =
+  const [referencia, setReferencia] =
     useState("");
 
-  const [observaciones, setObservaciones] =
-    useState("");
-
-  const [busquedaProducto, setBusquedaProducto] =
-    useState("");
-
-  const [busquedaApartado, setBusquedaApartado] =
-    useState("");
-
-  const [estadoFiltro, setEstadoFiltro] =
+  const [motivoCancelacion, setMotivoCancelacion] =
     useState("");
 
   const [cargando, setCargando] =
     useState(true);
 
-  const [guardando, setGuardando] =
+  const [procesando, setProcesando] =
     useState(false);
 
-  const [apartadoExitoso, setApartadoExitoso] =
-    useState<ApartadoExitoso | null>(null);
-
-  const [tokenOperacion, setTokenOperacion] =
+  const [tokenAbono, setTokenAbono] =
     useState(() => crypto.randomUUID());
 
-  const cargarCatalogos = async () => {
-    const respuesta =
-      await api.get<CatalogosApartado>(
-        "/apartados/catalogos",
-      );
+  const [mostrarReciboApartado, setMostrarReciboApartado] =
+    useState(false);
 
-    const datos = respuesta.data;
+  const [pagoSeleccionado, setPagoSeleccionado] =
+    useState<PagoApartado | null>(null);
 
-    setCatalogos(datos);
-
-    setCantidadCuotas((actual) => {
-      const maximo = Math.max(
-        1,
-        Number(datos.politica?.maximo_cuotas || 24),
-      );
-
-      return Math.min(Math.max(actual, 1), maximo);
-    });
-
-    const frecuencias =
-      datos.politica?.frecuencias_pago || [];
-
-    if (
-      !frecuencias.some(
-        (item) => item.codigo === frecuenciaPago,
-      )
-    ) {
-      setFrecuenciaPago(
-        frecuencias[0]?.codigo || "MENSUAL",
-      );
-    }
-
-    setIdCliente((actual) => {
-      const existe = datos.clientes.some(
-        (cliente) =>
-          cliente.id_cliente === actual,
-      );
-
-      if (existe) {
-        return actual;
-      }
-
-      return datos.clientes[0]?.id_cliente || 0;
-    });
-
-    setIdMetodoPago((actual) => {
-      const existe = datos.metodos_pago.some(
-        (metodo) =>
-          metodo.id_metodo_pago === actual,
-      );
-
-      if (existe) {
-        return actual;
-      }
-
-      return (
-        datos.metodos_pago[0]?.id_metodo_pago ||
-        0
-      );
-    });
-  };
-
-  const cargarApartados = async () => {
-    const respuesta =
-      await api.get<ApartadoListado[]>(
-        "/apartados",
-        {
-          params: {
-            estado:
-              estadoFiltro.trim() || undefined,
-            buscar:
-              busquedaApartado.trim() ||
-              undefined,
-          },
-        },
-      );
-
-    setApartados(
-      Array.isArray(respuesta.data)
-        ? respuesta.data
-        : [],
-    );
-  };
-
-  const cargarDatos = async () => {
+  const cargar = async () => {
     try {
       setCargando(true);
 
-      await Promise.all([
-        cargarCatalogos(),
-        cargarApartados(),
+      const [
+        respuestaApartado,
+        respuestaCatalogos,
+      ] = await Promise.all([
+        api.get<DetalleApartado>(
+          `/apartados/${id}`,
+        ),
+
+        api.get<CatalogosApartado>(
+          "/apartados/catalogos",
+        ),
       ]);
-    } catch (error: any) {
-      console.error(
-        "Error al cargar ApartadoYA:",
-        error,
+
+      setApartado(respuestaApartado.data);
+
+      const metodos =
+        respuestaCatalogos.data.metodos_pago ||
+        [];
+
+      setMetodosPago(metodos);
+
+      setPorcentajeMinimoEntrega(
+        Number(
+          respuestaCatalogos.data.politica
+            ?.porcentaje_minimo_entrega || 85,
+        ),
       );
 
+      setIdMetodoPago((actual) => {
+        const existe = metodos.some(
+          (metodo) =>
+            metodo.id_metodo_pago === actual,
+        );
+
+        return existe
+          ? actual
+          : metodos[0]?.id_metodo_pago || 0;
+      });
+    } catch (error: any) {
       alert(
         error.response?.data?.message ||
-          "No fue posible cargar ApartadoYA",
+          "No fue posible cargar el apartado",
       );
+
+      navigate("/apartados");
     } finally {
       setCargando(false);
     }
   };
 
   useEffect(() => {
-    cargarDatos();
-  }, []);
-
-  const clienteSeleccionado = useMemo(
-    () =>
-      catalogos?.clientes.find(
-        (cliente) =>
-          cliente.id_cliente === idCliente,
-      ) || null,
-    [catalogos, idCliente],
-  );
+    cargar();
+  }, [id]);
 
   const metodoSeleccionado = useMemo(
     () =>
-      catalogos?.metodos_pago.find(
+      metodosPago.find(
         (metodo) =>
           metodo.id_metodo_pago ===
           idMetodoPago,
       ) || null,
-    [catalogos, idMetodoPago],
+    [metodosPago, idMetodoPago],
   );
 
-  const productosFiltrados = useMemo(() => {
-    const productos =
-      catalogos?.productos || [];
-
-    const buscar = busquedaProducto
-      .trim()
-      .toLowerCase();
-
-    if (!buscar) {
-      return productos;
-    }
-
-    return productos.filter((producto) => {
-      const valores = [
-        producto.codigo_producto,
-        producto.producto,
-        producto.codigo_variante,
-        producto.marca,
-        producto.categoria,
-        producto.color || "",
-        producto.material || "",
-        producto.medida || "",
-      ];
-
-      return valores.some((valor) =>
-        valor.toLowerCase().includes(buscar),
-      );
-    });
-  }, [catalogos, busquedaProducto]);
-
-  const total = useMemo(() => {
-    return Number(
-      carrito
-        .reduce(
-          (acumulado, item) =>
-            acumulado +
-            item.precio_venta *
-              item.cantidad,
-          0,
-        )
-        .toFixed(2),
-    );
-  }, [carrito]);
-
-  const engancheNumero =
-    Number(enganche || 0);
-
-  const saldoPendiente = Math.max(
-    0,
-    Number(
-      (total - engancheNumero).toFixed(2),
-    ),
-  );
-
-  const porcentajeInicial =
-    total > 0
-      ? Number(
-          (
-            (engancheNumero / total) *
-            100
-          ).toFixed(2),
-        )
-      : 0;
-
-  const calendarioSimulado = useMemo<
-    CuotaSimulada[]
-  >(() => {
-    if (
-      saldoPendiente <= 0 ||
-      cantidadCuotas <= 0 ||
-      !fechaPrimerPago
-    ) {
-      return [];
-    }
-
-    const montoBase = Math.floor(
-      (saldoPendiente / cantidadCuotas) * 100,
-    ) / 100;
-
-    let acumulado = 0;
-
-    return Array.from(
-      { length: cantidadCuotas },
-      (_, indice) => {
-        const esUltima =
-          indice === cantidadCuotas - 1;
-
-        const monto = esUltima
-          ? Number(
-              (saldoPendiente - acumulado).toFixed(2),
-            )
-          : montoBase;
-
-        acumulado = Number(
-          (acumulado + monto).toFixed(2),
-        );
-
-        return {
-          numero_cuota: indice + 1,
-          fecha_vencimiento: sumarFrecuencia(
-            fechaPrimerPago,
-            frecuenciaPago,
-            indice,
-          ),
-          monto_programado: monto,
-        };
-      },
-    );
-  }, [
-    saldoPendiente,
-    cantidadCuotas,
-    frecuenciaPago,
-    fechaPrimerPago,
-  ]);
-
-  const agregarProducto = () => {
-    const producto =
-      catalogos?.productos.find(
-        (item) =>
-          item.id_variante === idVariante,
-      );
-
-    if (!producto) {
-      alert("Seleccione un producto");
+  const imprimirVale = () => {
+    if (!apartado) {
       return;
     }
 
-    if (
-      !Number.isInteger(cantidad) ||
-      cantidad <= 0
-    ) {
-      alert(
-        "La cantidad debe ser mayor que cero",
-      );
-      return;
-    }
-
-    const existente = carrito.find(
-      (item) =>
-        item.id_variante === idVariante,
-    );
-
-    const cantidadFinal =
-      (existente?.cantidad || 0) + cantidad;
-
-    if (
-      cantidadFinal >
-      producto.stock_disponible
-    ) {
-      alert(
-        `Solo hay ${producto.stock_disponible} unidades disponibles`,
-      );
-      return;
-    }
-
-    if (existente) {
-      setCarrito((actual) =>
-        actual.map((item) =>
-          item.id_variante === idVariante
-            ? {
-                ...item,
-                cantidad: cantidadFinal,
-              }
-            : item,
-        ),
-      );
-    } else {
-      setCarrito((actual) => [
-        ...actual,
-        {
-          ...producto,
-          cantidad,
-        },
-      ]);
-    }
-
-    setIdVariante(0);
-    setCantidad(1);
-    setBusquedaProducto("");
+    setMostrarReciboApartado(true);
   };
 
-  const cambiarCantidad = (
-    idVarianteItem: number,
-    nuevaCantidad: number,
+  const imprimirRecibo = (
+    pago: PagoApartado,
   ) => {
-    const producto = carrito.find(
-      (item) =>
-        item.id_variante ===
-        idVarianteItem,
-    );
-
-    if (!producto) {
-      return;
-    }
-
-    if (
-      !Number.isInteger(nuevaCantidad) ||
-      nuevaCantidad <= 0
-    ) {
-      setCarrito((actual) =>
-        actual.filter(
-          (item) =>
-            item.id_variante !==
-            idVarianteItem,
-        ),
-      );
-
-      return;
-    }
-
-    if (
-      nuevaCantidad >
-      producto.stock_disponible
-    ) {
-      alert(
-        `Solo hay ${producto.stock_disponible} unidades disponibles`,
-      );
-      return;
-    }
-
-    setCarrito((actual) =>
-      actual.map((item) =>
-        item.id_variante === idVarianteItem
-          ? {
-              ...item,
-              cantidad: nuevaCantidad,
-            }
-          : item,
-      ),
-    );
+    setPagoSeleccionado(pago);
   };
 
-  const quitarProducto = (
-    idVarianteItem: number,
+  const obtenerSaldosPago = (
+    pago: PagoApartado,
   ) => {
-    setCarrito((actual) =>
-      actual.filter(
-        (item) =>
-          item.id_variante !==
-          idVarianteItem,
-      ),
+    if (!apartado) {
+      return {
+        saldoAnterior: 0,
+        saldoNuevo: 0,
+      };
+    }
+
+    const pagosOrdenados = [...apartado.pagos].sort(
+      (a, b) =>
+        new Date(a.fecha).getTime() -
+          new Date(b.fecha).getTime() ||
+        a.id_pago - b.id_pago,
     );
-  };
 
-  const limpiarFormulario = () => {
-    setCarrito([]);
-    setEnganche("");
-    setCantidadCuotas(1);
-    setFrecuenciaPago("MENSUAL");
-    setFechaPrimerPago(
-      fechaPrimerPagoPredeterminada(),
-    );
-    setReferenciaPago("");
-    setObservaciones("");
-    setBusquedaProducto("");
-    setIdVariante(0);
-    setCantidad(1);
-  };
+    let acumuladoAnterior = 0;
 
-  const guardarApartado = async () => {
-    if (guardando) {
-      return;
+    for (const item of pagosOrdenados) {
+      if (item.id_pago === pago.id_pago) {
+        break;
+      }
+
+      acumuladoAnterior += Number(item.monto);
     }
 
-    if (!catalogos?.turno) {
-      alert(
-        "Debes abrir caja antes de registrar un apartado",
-      );
-      return;
-    }
-
-    if (idCliente <= 0) {
-      alert("Seleccione un cliente");
-      return;
-    }
-
-    if (carrito.length === 0) {
-      alert(
-        "Agregue al menos un producto",
-      );
-      return;
-    }
-
-    if (idMetodoPago <= 0) {
-      alert(
-        "Seleccione un método de pago",
-      );
-      return;
-    }
-
-    if (
-      !Number.isFinite(engancheNumero) ||
-      engancheNumero < 0
-    ) {
-      alert("El enganche es inválido");
-      return;
-    }
-
-    if (engancheNumero > total) {
-      alert(
-        "El enganche no puede superar el total",
-      );
-      return;
-    }
-
-    const maximoCuotas = Math.max(
-      1,
+    const saldoAnterior = Math.max(
+      0,
       Number(
-        catalogos?.politica?.maximo_cuotas || 24,
+        (
+          apartado.total -
+          acumuladoAnterior
+        ).toFixed(2),
       ),
     );
 
+    const saldoNuevo = Math.max(
+      0,
+      Number(
+        (
+          saldoAnterior -
+          Number(pago.monto)
+        ).toFixed(2),
+      ),
+    );
+
+    return {
+      saldoAnterior,
+      saldoNuevo,
+    };
+  };
+
+  const registrarAbono = async () => {
+    if (!apartado || procesando) {
+      return;
+    }
+
+    const montoNumero = Number(monto);
+
     if (
-      !Number.isInteger(cantidadCuotas) ||
-      cantidadCuotas < 1 ||
-      cantidadCuotas > maximoCuotas
+      !Number.isFinite(montoNumero) ||
+      montoNumero <= 0
     ) {
       alert(
-        `La cantidad de cuotas debe estar entre 1 y ${maximoCuotas}`,
+        "El monto del abono debe ser mayor que cero",
       );
       return;
     }
 
     if (
-      !["SEMANAL", "QUINCENAL", "MENSUAL"].includes(
-        frecuenciaPago,
-      )
+      montoNumero >
+      apartado.saldo_pendiente
     ) {
-      alert("Seleccione una frecuencia de pago");
-      return;
-    }
-
-    if (!fechaPrimerPago) {
-      alert("Seleccione la fecha del primer pago");
+      alert(
+        `El abono no puede superar el saldo de Q${apartado.saldo_pendiente.toFixed(
+          2,
+        )}`,
+      );
       return;
     }
 
     if (
       metodoSeleccionado
         ?.requiere_referencia === 1 &&
-      !referenciaPago.trim()
+      !referencia.trim()
     ) {
       alert(
         "El método de pago requiere referencia",
@@ -705,9 +343,7 @@ export default function Apartados() {
     }
 
     const confirmar = window.confirm(
-      `¿Registrar el apartado por Q${total.toFixed(
-        2,
-      )} con un enganche de Q${engancheNumero.toFixed(
+      `¿Registrar un abono de Q${montoNumero.toFixed(
         2,
       )}?`,
     );
@@ -717,78 +353,145 @@ export default function Apartados() {
     }
 
     try {
-      setGuardando(true);
+      setProcesando(true);
 
-      const respuesta = await api.post<{
-        mensaje: string;
-        apartado: ApartadoCreado;
-      }>("/apartados", {
-        token_operacion: tokenOperacion,
-        id_cliente: idCliente,
-        id_metodo_pago: idMetodoPago,
-        enganche: engancheNumero,
-        cantidad_cuotas: cantidadCuotas,
-        frecuencia_pago: frecuenciaPago,
-        fecha_primer_pago: fechaPrimerPago,
-        referencia_pago:
-          referenciaPago.trim() || null,
-        observaciones:
-          observaciones.trim() || null,
+      await api.post(
+        `/apartados/${apartado.id_apartado}/abonos`,
+        {
+          token_operacion: tokenAbono,
+          id_metodo_pago: idMetodoPago,
+          monto: montoNumero,
+          referencia:
+            referencia.trim() || null,
+        },
+      );
 
-        detalles: carrito.map((item) => ({
-          id_variante: item.id_variante,
-          cantidad: item.cantidad,
-        })),
-      });
+      setMonto("");
+      setReferencia("");
 
-      const apartado =
-        respuesta.data?.apartado;
-
-      if (!apartado) {
-        throw new Error(
-          "El backend no devolvió el apartado",
-        );
-      }
-
-      setApartadoExitoso({
-        id_apartado:
-          apartado.id_apartado,
-        codigo_apartado:
-          apartado.codigo_apartado,
-        cliente:
-          apartado.cliente.nombre,
-        total: Number(apartado.total),
-        enganche: Number(
-          apartado.enganche,
-        ),
-        saldo_pendiente: Number(
-          apartado.saldo_pendiente,
-        ),
-      });
-
-      limpiarFormulario();
-
-      setTokenOperacion(
+      setTokenAbono(
         crypto.randomUUID(),
       );
 
-      await Promise.all([
-        cargarCatalogos(),
-        cargarApartados(),
-      ]);
+      await cargar();
+
+      alert(
+        "Abono registrado correctamente",
+      );
     } catch (error: any) {
       console.error(
-        "Error al registrar apartado:",
+        "Error completo al registrar apartado:",
         error,
       );
 
+      console.error(
+        "Respuesta del backend:",
+        error.response?.data,
+      );
+
+      const respuesta = error.response?.data;
+
+      let mensaje =
+        "No fue posible completar la operación de ApartadoYA";
+
+      if (typeof respuesta?.message === "string") {
+        mensaje = respuesta.message;
+      } else if (Array.isArray(respuesta?.message)) {
+        mensaje = respuesta.message.join("\n");
+      } else if (respuesta?.error) {
+        mensaje = respuesta.error;
+      } else if (error.message) {
+        mensaje = error.message;
+      }
+
+      alert(mensaje);
+    } finally {
+      setProcesando(false);
+    }
+  };
+
+  const entregar = async () => {
+    if (!apartado || procesando) {
+      return;
+    }
+
+    const confirmar = window.confirm(
+      "¿Confirmas que los productos serán entregados al cliente?",
+    );
+
+    if (!confirmar) {
+      return;
+    }
+
+    try {
+      setProcesando(true);
+
+      await api.patch(
+        `/apartados/${apartado.id_apartado}/entregar`,
+      );
+
+      await cargar();
+
+      alert(
+        "Productos entregados correctamente",
+      );
+    } catch (error: any) {
       alert(
         error.response?.data?.message ||
-          error.message ||
-          "No fue posible registrar el apartado",
+          "No fue posible entregar los productos",
       );
     } finally {
-      setGuardando(false);
+      setProcesando(false);
+    }
+  };
+
+  const cancelar = async () => {
+    if (!apartado || procesando) {
+      return;
+    }
+
+    const motivo =
+      motivoCancelacion.trim();
+
+    if (motivo.length < 5) {
+      alert(
+        "Indique un motivo de cancelación",
+      );
+      return;
+    }
+
+    const confirmar = window.confirm(
+      "¿Cancelar el apartado y liberar los productos reservados?",
+    );
+
+    if (!confirmar) {
+      return;
+    }
+
+    try {
+      setProcesando(true);
+
+      await api.patch(
+        `/apartados/${apartado.id_apartado}/cancelar`,
+        {
+          motivo,
+        },
+      );
+
+      setMotivoCancelacion("");
+
+      await cargar();
+
+      alert(
+        "Apartado cancelado correctamente",
+      );
+    } catch (error: any) {
+      alert(
+        error.response?.data?.message ||
+          "No fue posible cancelar el apartado",
+      );
+    } finally {
+      setProcesando(false);
     }
   };
 
@@ -796,649 +499,60 @@ export default function Apartados() {
     return (
       <Layout>
         <Card>
-          <Loader texto="Cargando ApartadoYA..." />
+          <Loader texto="Cargando apartado..." />
         </Card>
       </Layout>
     );
   }
 
+  if (!apartado) {
+    return null;
+  }
+
+  const estaActivo =
+    apartado.codigo_estado === "ACTIVO";
+
+  const puedeEntregar =
+    estaActivo &&
+    apartado.elegible_entrega &&
+    apartado.entregado === 0;
+
   return (
     <Layout>
-      <TituloPagina
-        titulo="ApartadoYA"
-        descripcion="Reserva productos, registra enganches y administra abonos."
-      />
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+        <TituloPagina
+          titulo={`Apartado ${apartado.codigo_apartado}`}
+          descripcion="Detalle, pagos, productos reservados y entrega."
+        />
 
-      {!catalogos?.turno && (
-        <Card className="mb-6 border border-red-200 bg-red-50">
-          <p className="font-bold text-red-700">
-            No tienes una caja abierta
-          </p>
+        <div className="flex flex-wrap gap-3">
+          <BotonPrimario
+            type="button"
+            onClick={imprimirVale}
+          >
+            Imprimir vale / PDF
+          </BotonPrimario>
 
-          <p className="mt-1 text-sm text-red-600">
-            Es necesario abrir caja para
-            registrar enganches y abonos.
-          </p>
-        </Card>
-      )}
+          <BotonSecundario
+            type="button"
+            onClick={() =>
+              navigate("/apartados")
+            }
+          >
+            Regresar
+          </BotonSecundario>
+        </div>
+      </div>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
         <div className="space-y-6 xl:col-span-2">
           <Card>
-            <h2 className="mb-4 text-xl font-bold">
-              Nuevo apartado
-            </h2>
-
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <Select
-                label="Cliente"
-                value={idCliente}
-                disabled={guardando}
-                onChange={(e) =>
-                  setIdCliente(
-                    Number(e.target.value),
-                  )
-                }
-              >
-                <option value={0}>
-                  Seleccione cliente
-                </option>
-
-                {catalogos?.clientes.map(
-                  (cliente) => (
-                    <option
-                      key={cliente.id_cliente}
-                      value={cliente.id_cliente}
-                    >
-                      {cliente.codigo_cliente} -{" "}
-                      {cliente.cliente}
-                    </option>
-                  ),
-                )}
-              </Select>
-
-              <div className="rounded-xl bg-slate-50 p-4">
+            <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+              <div>
                 <p className="text-sm text-slate-500">
-                  Tipo de cliente
+                  Estado
                 </p>
 
-                <p className="font-bold">
-                  {clienteSeleccionado?.tipo_cliente ||
-                    "-"}
-                </p>
-
-                <p className="text-sm text-blue-600">
-                  Cliente seleccionado:{" "}
-                  {clienteSeleccionado?.cliente ||
-                    "-"}
-                </p>
-              </div>
-            </div>
-          </Card>
-
-          <Card>
-            <h2 className="mb-4 text-xl font-bold">
-              Agregar productos
-            </h2>
-
-            <Input
-              label="Buscar producto"
-              value={busquedaProducto}
-              disabled={guardando}
-              onChange={(e) =>
-                setBusquedaProducto(
-                  e.target.value,
-                )
-              }
-              placeholder="Código, producto, variante, color..."
-            />
-
-            <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-4">
-              <div className="md:col-span-3">
-                <Select
-                  label="Producto / variante"
-                  value={idVariante}
-                  disabled={guardando}
-                  onChange={(e) =>
-                    setIdVariante(
-                      Number(e.target.value),
-                    )
-                  }
-                >
-                  <option value={0}>
-                    Seleccione producto
-                  </option>
-
-                  {productosFiltrados.map(
-                    (producto) => (
-                      <option
-                        key={producto.id_variante}
-                        value={
-                          producto.id_variante
-                        }
-                      >
-                        {
-                          producto.codigo_producto
-                        }{" "}
-                        - {producto.producto} -{" "}
-                        {
-                          producto.codigo_variante
-                        }{" "}
-                        | Disponible:{" "}
-                        {
-                          producto.stock_disponible
-                        }{" "}
-                        | Q
-                        {producto.precio_venta.toFixed(
-                          2,
-                        )}
-                      </option>
-                    ),
-                  )}
-                </Select>
-              </div>
-
-              <Input
-                label="Cantidad"
-                type="number"
-                min={1}
-                step={1}
-                value={cantidad}
-                disabled={guardando}
-                onChange={(e) =>
-                  setCantidad(
-                    Number(e.target.value),
-                  )
-                }
-              />
-
-              <div className="md:col-span-4">
-                <BotonPrimario
-                  type="button"
-                  className="w-full"
-                  disabled={
-                    guardando ||
-                    idVariante <= 0
-                  }
-                  onClick={agregarProducto}
-                >
-                  Agregar al apartado
-                </BotonPrimario>
-              </div>
-            </div>
-          </Card>
-
-          <Tabla<CarritoItem>
-            datos={carrito}
-            mensajeVacio="No hay productos agregados"
-            columnas={[
-              {
-                titulo: "Producto",
-                render: (item) => (
-                  <div>
-                    <p className="font-semibold">
-                      {item.producto}
-                    </p>
-
-                    <p className="text-xs text-slate-500">
-                      {item.codigo_variante}
-                    </p>
-                  </div>
-                ),
-              },
-              {
-                titulo: "Precio",
-                render: (item) =>
-                  `Q${item.precio_venta.toFixed(
-                    2,
-                  )}`,
-              },
-              {
-                titulo: "Cantidad",
-                render: (item) => (
-                  <input
-                    type="number"
-                    min={1}
-                    max={
-                      item.stock_disponible
-                    }
-                    value={item.cantidad}
-                    disabled={guardando}
-                    onChange={(e) =>
-                      cambiarCantidad(
-                        item.id_variante,
-                        Number(e.target.value),
-                      )
-                    }
-                    className="w-20 rounded-lg border px-2 py-1"
-                  />
-                ),
-              },
-              {
-                titulo: "Subtotal",
-                render: (item) =>
-                  `Q${(
-                    item.precio_venta *
-                    item.cantidad
-                  ).toFixed(2)}`,
-              },
-              {
-                titulo: "Acción",
-                render: (item) => (
-                  <button
-                    type="button"
-                    disabled={guardando}
-                    onClick={() =>
-                      quitarProducto(
-                        item.id_variante,
-                      )
-                    }
-                    className="font-semibold text-red-600 hover:underline"
-                  >
-                    Quitar
-                  </button>
-                ),
-              },
-            ]}
-          />
-        </div>
-
-        <div>
-          <Card className="sticky top-6">
-            <h2 className="mb-5 text-xl font-bold">
-              Resumen
-            </h2>
-
-            <div className="space-y-3">
-              <div className="flex justify-between">
-                <span className="text-slate-500">
-                  Sucursal
-                </span>
-
-                <span className="font-semibold">
-                  {catalogos?.sucursal.nombre}
-                </span>
-              </div>
-
-              <div className="flex justify-between">
-                <span className="text-slate-500">
-                  Caja
-                </span>
-
-                <span className="font-semibold">
-                  {catalogos?.turno?.caja ||
-                    "Sin caja"}
-                </span>
-              </div>
-
-              <hr />
-
-              <div className="flex justify-between text-xl font-bold">
-                <span>Total</span>
-
-                <span>
-                  Q{total.toFixed(2)}
-                </span>
-              </div>
-            </div>
-
-            <div className="mt-5 space-y-4">
-              <Input
-                label="Enganche"
-                type="number"
-                min={0}
-                step="0.01"
-                value={enganche}
-                disabled={guardando}
-                onChange={(e) =>
-                  setEnganche(e.target.value)
-                }
-                placeholder="0.00"
-              />
-
-              <div className="rounded-xl bg-blue-50 p-4">
-                <p className="text-sm text-blue-600">
-                  Porcentaje inicial pagado
-                </p>
-
-                <p className="text-xl font-bold text-blue-700">
-                  {porcentajeInicial.toFixed(
-                    2,
-                  )}
-                  %
-                </p>
-              </div>
-
-              <div className="rounded-xl bg-red-50 p-4">
-                <p className="text-sm text-red-600">
-                  Saldo pendiente
-                </p>
-
-                <p className="text-2xl font-bold text-red-700">
-                  Q
-                  {saldoPendiente.toFixed(
-                    2,
-                  )}
-                </p>
-              </div>
-
-              <Input
-                label="Cantidad de cuotas"
-                type="number"
-                min={1}
-                max={
-                  catalogos?.politica
-                    .maximo_cuotas || 24
-                }
-                step={1}
-                value={cantidadCuotas}
-                disabled={
-                  guardando ||
-                  saldoPendiente <= 0
-                }
-                onChange={(e) =>
-                  setCantidadCuotas(
-                    Math.max(
-                      1,
-                      Number(e.target.value),
-                    ),
-                  )
-                }
-              />
-
-              <Select
-                label="Frecuencia de pago"
-                value={frecuenciaPago}
-                disabled={
-                  guardando ||
-                  saldoPendiente <= 0
-                }
-                onChange={(e) =>
-                  setFrecuenciaPago(
-                    e.target.value as FrecuenciaPago,
-                  )
-                }
-              >
-                {(
-                  catalogos?.politica
-                    .frecuencias_pago || []
-                ).map((frecuencia) => (
-                  <option
-                    key={frecuencia.codigo}
-                    value={frecuencia.codigo}
-                  >
-                    {frecuencia.nombre}
-                  </option>
-                ))}
-              </Select>
-
-              <Input
-                label="Fecha del primer pago"
-                type="date"
-                value={fechaPrimerPago}
-                disabled={
-                  guardando ||
-                  saldoPendiente <= 0
-                }
-                onChange={(e) =>
-                  setFechaPrimerPago(
-                    e.target.value,
-                  )
-                }
-              />
-
-              {calendarioSimulado.length > 0 && (
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                  <div className="mb-3 flex items-center justify-between">
-                    <p className="font-bold text-slate-800">
-                      Calendario estimado
-                    </p>
-
-                    <span className="text-xs text-slate-500">
-                      {calendarioSimulado.length} cuotas
-                    </span>
-                  </div>
-
-                  <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
-                    {calendarioSimulado.map(
-                      (cuota) => (
-                        <div
-                          key={cuota.numero_cuota}
-                          className="flex items-center justify-between rounded-lg bg-white px-3 py-2 text-sm shadow-sm"
-                        >
-                          <div>
-                            <p className="font-semibold">
-                              Cuota{" "}
-                              {cuota.numero_cuota}
-                            </p>
-
-                            <p className="text-xs text-slate-500">
-                              {new Date(
-                                `${cuota.fecha_vencimiento}T00:00:00`,
-                              ).toLocaleDateString()}
-                            </p>
-                          </div>
-
-                          <p className="font-bold text-slate-800">
-                            Q
-                            {cuota.monto_programado.toFixed(
-                              2,
-                            )}
-                          </p>
-                        </div>
-                      ),
-                    )}
-                  </div>
-                </div>
-              )}
-
-              <Select
-                label="Método de pago"
-                value={idMetodoPago}
-                disabled={guardando}
-                onChange={(e) =>
-                  setIdMetodoPago(
-                    Number(e.target.value),
-                  )
-                }
-              >
-                <option value={0}>
-                  Seleccione método
-                </option>
-
-                {catalogos?.metodos_pago.map(
-                  (metodo) => (
-                    <option
-                      key={
-                        metodo.id_metodo_pago
-                      }
-                      value={
-                        metodo.id_metodo_pago
-                      }
-                    >
-                      {metodo.nombre}
-                    </option>
-                  ),
-                )}
-              </Select>
-
-              {metodoSeleccionado
-                ?.requiere_referencia ===
-                1 && (
-                <Input
-                  label="Referencia del pago"
-                  value={referenciaPago}
-                  disabled={guardando}
-                  onChange={(e) =>
-                    setReferenciaPago(
-                      e.target.value,
-                    )
-                  }
-                  placeholder="Número de autorización o referencia"
-                />
-              )}
-
-              <Input
-                label="Observaciones"
-                value={observaciones}
-                disabled={guardando}
-                onChange={(e) =>
-                  setObservaciones(
-                    e.target.value,
-                  )
-                }
-                placeholder="Información adicional"
-              />
-            </div>
-
-            <BotonPrimario
-              type="button"
-              className="mt-5 w-full"
-              disabled={
-                guardando ||
-                !catalogos?.turno ||
-                carrito.length === 0 ||
-                idCliente <= 0 ||
-                idMetodoPago <= 0 ||
-                engancheNumero > total ||
-                cantidadCuotas < 1 ||
-                !fechaPrimerPago
-              }
-              onClick={guardarApartado}
-            >
-              {guardando
-                ? "Procesando..."
-                : "Registrar apartado"}
-            </BotonPrimario>
-
-            <BotonSecundario
-              type="button"
-              className="mt-3 w-full"
-              disabled={guardando}
-              onClick={() =>
-                navigate("/dashboard")
-              }
-            >
-              Regresar al menú
-            </BotonSecundario>
-          </Card>
-        </div>
-      </div>
-
-      <div className="mt-10">
-        <TituloPagina
-          titulo="Apartados registrados"
-          descripcion="Consulta apartados activos, completados y cancelados."
-        />
-
-        <Card className="mb-5">
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-            <div className="md:col-span-2">
-              <Input
-                label="Buscar"
-                value={busquedaApartado}
-                onChange={(e) =>
-                  setBusquedaApartado(
-                    e.target.value,
-                  )
-                }
-                placeholder="Código, cliente o NIT"
-              />
-            </div>
-
-            <Select
-              label="Estado"
-              value={estadoFiltro}
-              onChange={(e) =>
-                setEstadoFiltro(
-                  e.target.value,
-                )
-              }
-            >
-              <option value="">
-                Todos los estados
-              </option>
-
-              <option value="ACTIVO">
-                Activos
-              </option>
-
-              <option value="COMPLETADO">
-                Completados
-              </option>
-
-              <option value="CANCELADO">
-                Cancelados
-              </option>
-
-              <option value="VENCIDO">
-                Vencidos
-              </option>
-            </Select>
-
-            <div className="flex items-end">
-              <BotonPrimario
-                type="button"
-                className="w-full"
-                onClick={cargarApartados}
-              >
-                Buscar
-              </BotonPrimario>
-            </div>
-          </div>
-        </Card>
-
-        <Tabla<ApartadoListado>
-          datos={apartados}
-          mensajeVacio="No hay apartados registrados"
-          columnas={[
-            {
-              titulo: "Código",
-              render: (apartado) =>
-                apartado.codigo_apartado,
-            },
-            {
-              titulo: "Cliente",
-              render: (apartado) =>
-                apartado.cliente,
-            },
-            {
-              titulo: "Total",
-              render: (apartado) =>
-                `Q${apartado.total.toFixed(
-                  2,
-                )}`,
-            },
-            {
-              titulo: "Pagado",
-              render: (apartado) => (
-                <div>
-                  <p>
-                    Q
-                    {apartado.total_pagado.toFixed(
-                      2,
-                    )}
-                  </p>
-
-                  <p className="text-xs text-blue-600">
-                    {apartado.porcentaje_pagado.toFixed(
-                      2,
-                    )}
-                    %
-                  </p>
-                </div>
-              ),
-            },
-            {
-              titulo: "Saldo",
-              render: (apartado) =>
-                `Q${apartado.saldo_pendiente.toFixed(
-                  2,
-                )}`,
-            },
-            {
-              titulo: "Estado",
-              render: (apartado) => (
                 <Badge
                   texto={apartado.estado}
                   tipo={
@@ -1451,58 +565,570 @@ export default function Apartados() {
                         : "amarillo"
                   }
                 />
-              ),
-            },
-            {
-              titulo: "Acción",
-              render: (apartado) => (
-                <button
-                  type="button"
-                  className="font-semibold text-blue-600 hover:underline"
-                  onClick={() =>
-                    navigate(
-                      `/apartados/${apartado.id_apartado}`,
+              </div>
+
+              {apartado.entregado === 1 && (
+                <Badge
+                  texto="Entregado"
+                  tipo="verde"
+                />
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div>
+                <p className="text-sm text-slate-500">
+                  Cliente
+                </p>
+
+                <p className="font-bold">
+                  {apartado.cliente.nombre}
+                </p>
+
+                <p className="text-sm">
+                  {apartado.cliente.codigo}
+                </p>
+              </div>
+
+              <div>
+                <p className="text-sm text-slate-500">
+                  NIT
+                </p>
+
+                <p className="font-semibold">
+                  {apartado.cliente.nit ||
+                    "C/F"}
+                </p>
+              </div>
+
+              <div>
+                <p className="text-sm text-slate-500">
+                  Fecha de apartado
+                </p>
+
+                <p className="font-semibold">
+                  {new Date(
+                    apartado.fecha_apartado,
+                  ).toLocaleString()}
+                </p>
+              </div>
+
+              <div>
+                <p className="text-sm text-slate-500">
+                  Fecha límite
+                </p>
+
+                <p className="font-semibold">
+                  {apartado.fecha_limite
+                    ? new Date(
+                        `${apartado.fecha_limite}T00:00:00`,
+                      ).toLocaleDateString()
+                    : "Sin fecha límite"}
+                </p>
+              </div>
+
+              <div>
+                <p className="text-sm text-slate-500">
+                  Plan de pagos
+                </p>
+
+                <p className="font-semibold">
+                  {apartado.cantidad_cuotas || 0}{" "}
+                  cuotas -{" "}
+                  {apartado.frecuencia_pago || "-"}
+                </p>
+              </div>
+
+              <div>
+                <p className="text-sm text-slate-500">
+                  Primer pago
+                </p>
+
+                <p className="font-semibold">
+                  {apartado.fecha_primer_pago
+                    ? new Date(
+                        `${apartado.fecha_primer_pago}T00:00:00`,
+                      ).toLocaleDateString()
+                    : "-"}
+                </p>
+              </div>
+
+              <div>
+                <p className="text-sm text-slate-500">
+                  Sucursal
+                </p>
+
+                <p className="font-semibold">
+                  {apartado.sucursal}
+                </p>
+              </div>
+
+              <div>
+                <p className="text-sm text-slate-500">
+                  Registrado por
+                </p>
+
+                <p className="font-semibold">
+                  {apartado.usuario}
+                </p>
+              </div>
+            </div>
+          </Card>
+
+          <Card>
+            <BarraProgresoApartado
+              porcentaje={
+                apartado.porcentaje_pagado
+              }
+              entregado={
+                apartado.entregado === 1
+              }
+            />
+          </Card>
+
+          <div>
+            <h2 className="mb-3 text-xl font-bold">
+              Productos reservados
+            </h2>
+
+            <Tabla
+              datos={apartado.detalles}
+              mensajeVacio="No hay productos"
+              columnas={[
+                {
+                  titulo: "Producto",
+                  render: (detalle) => (
+                    <div>
+                      <p className="font-semibold">
+                        {detalle.producto}
+                      </p>
+
+                      <p className="text-xs text-slate-500">
+                        {
+                          detalle.codigo_variante
+                        }
+                      </p>
+                    </div>
+                  ),
+                },
+                {
+                  titulo: "Cantidad",
+                  render: (detalle) =>
+                    detalle.cantidad,
+                },
+                {
+                  titulo: "Precio",
+                  render: (detalle) =>
+                    `Q${detalle.precio_unitario.toFixed(
+                      2,
+                    )}`,
+                },
+                {
+                  titulo: "Subtotal",
+                  render: (detalle) =>
+                    `Q${detalle.subtotal.toFixed(
+                      2,
+                    )}`,
+                },
+              ]}
+            />
+          </div>
+
+          <div>
+            <h2 className="mb-3 text-xl font-bold">
+              Calendario de cuotas
+            </h2>
+
+            <Tabla
+              datos={apartado.cuotas || []}
+              mensajeVacio="No existen cuotas programadas"
+              columnas={[
+                {
+                  titulo: "Cuota",
+                  render: (cuota) =>
+                    `${cuota.numero_cuota} de ${
+                      apartado.cantidad_cuotas || 0
+                    }`,
+                },
+                {
+                  titulo: "Vencimiento",
+                  render: (cuota) =>
+                    new Date(
+                      `${cuota.fecha_vencimiento}T00:00:00`,
+                    ).toLocaleDateString(),
+                },
+                {
+                  titulo: "Programado",
+                  render: (cuota) =>
+                    `Q${cuota.monto_programado.toFixed(
+                      2,
+                    )}`,
+                },
+                {
+                  titulo: "Pagado",
+                  render: (cuota) =>
+                    `Q${cuota.monto_pagado.toFixed(
+                      2,
+                    )}`,
+                },
+                {
+                  titulo: "Saldo",
+                  render: (cuota) =>
+                    `Q${cuota.saldo.toFixed(2)}`,
+                },
+                {
+                  titulo: "Estado",
+                  render: (cuota) => (
+                    <Badge
+                      texto={cuota.estado_calculado}
+                      tipo={
+                        cuota.estado_calculado ===
+                        "PAGADA"
+                          ? "verde"
+                          : cuota.estado_calculado ===
+                              "VENCIDA"
+                            ? "rojo"
+                            : "amarillo"
+                      }
+                    />
+                  ),
+                },
+              ]}
+            />
+          </div>
+
+          <div>
+            <h2 className="mb-3 text-xl font-bold">
+              Historial de abonos
+            </h2>
+
+            <Tabla
+              datos={apartado.pagos}
+              mensajeVacio="No existen abonos registrados"
+              columnas={[
+                {
+                  titulo: "Fecha",
+                  render: (pago) =>
+                    new Date(
+                      pago.fecha,
+                    ).toLocaleString(),
+                },
+                {
+                  titulo: "Método",
+                  render: (pago) =>
+                    pago.metodo_pago,
+                },
+                {
+                  titulo: "Monto",
+                  render: (pago) =>
+                    `Q${pago.monto.toFixed(
+                      2,
+                    )}`,
+                },
+                {
+                  titulo: "Referencia",
+                  render: (pago) =>
+                    pago.referencia || "-",
+                },
+                {
+                  titulo: "Recibo",
+                  render: (pago) => (
+                    <button
+                      type="button"
+                      className="font-semibold text-blue-600 hover:underline"
+                      onClick={() =>
+                        imprimirRecibo(pago)
+                      }
+                    >
+                      Imprimir / PDF
+                    </button>
+                  ),
+                },
+              ]}
+            />
+          </div>
+        </div>
+
+        <div className="space-y-6">
+          <Card>
+            <h2 className="mb-5 text-xl font-bold">
+              Resumen
+            </h2>
+
+            <div className="space-y-4">
+              <div className="flex justify-between">
+                <span>Total</span>
+
+                <span className="font-bold">
+                  Q{apartado.total.toFixed(2)}
+                </span>
+              </div>
+
+              <div className="flex justify-between text-blue-700">
+                <span>Pagado</span>
+
+                <span className="font-bold">
+                  Q
+                  {apartado.total_pagado.toFixed(
+                    2,
+                  )}
+                </span>
+              </div>
+
+              <div className="flex justify-between border-t pt-4 text-lg text-red-700">
+                <span className="font-bold">
+                  Saldo
+                </span>
+
+                <span className="font-bold">
+                  Q
+                  {apartado.saldo_pendiente.toFixed(
+                    2,
+                  )}
+                </span>
+              </div>
+            </div>
+          </Card>
+
+          {estaActivo &&
+            apartado.saldo_pendiente > 0 && (
+              <Card>
+                <h2 className="mb-4 text-xl font-bold">
+                  Registrar abono
+                </h2>
+
+                <div className="space-y-4">
+                  <Input
+                    label="Monto"
+                    type="number"
+                    min={0.01}
+                    step="0.01"
+                    value={monto}
+                    disabled={procesando}
+                    onChange={(e) =>
+                      setMonto(e.target.value)
+                    }
+                    placeholder="0.00"
+                  />
+
+                  <Select
+                    label="Método de pago"
+                    value={idMetodoPago}
+                    disabled={procesando}
+                    onChange={(e) =>
+                      setIdMetodoPago(
+                        Number(
+                          e.target.value,
+                        ),
+                      )
+                    }
+                  >
+                    {metodosPago.map(
+                      (metodo) => (
+                        <option
+                          key={
+                            metodo.id_metodo_pago
+                          }
+                          value={
+                            metodo.id_metodo_pago
+                          }
+                        >
+                          {metodo.nombre}
+                        </option>
+                      ),
+                    )}
+                  </Select>
+
+                  {metodoSeleccionado
+                    ?.requiere_referencia ===
+                    1 && (
+                    <Input
+                      label="Referencia"
+                      value={referencia}
+                      disabled={procesando}
+                      onChange={(e) =>
+                        setReferencia(
+                          e.target.value,
+                        )
+                      }
+                    />
+                  )}
+
+                  <BotonPrimario
+                    type="button"
+                    className="w-full"
+                    disabled={
+                      procesando ||
+                      !monto ||
+                      Number(monto) <= 0
+                    }
+                    onClick={registrarAbono}
+                  >
+                    {procesando
+                      ? "Procesando..."
+                      : "Registrar abono"}
+                  </BotonPrimario>
+                </div>
+              </Card>
+            )}
+
+          {puedeEntregar && (
+            <Card className="border border-green-200 bg-green-50">
+              <h2 className="text-lg font-bold text-green-800">
+                Listo para entrega
+              </h2>
+
+              <p className="mt-2 text-sm text-green-700">
+                El cliente alcanzó al menos
+                el {porcentajeMinimoEntrega}% del total.
+              </p>
+
+              <BotonPrimario
+                type="button"
+                className="mt-4 w-full"
+                disabled={procesando}
+                onClick={entregar}
+              >
+                Entregar productos
+              </BotonPrimario>
+            </Card>
+          )}
+
+          {estaActivo &&
+            apartado.entregado === 0 && (
+              <Card className="border border-red-200">
+                <h2 className="mb-4 text-lg font-bold text-red-700">
+                  Cancelar apartado
+                </h2>
+
+                <Input
+                  label="Motivo"
+                  value={motivoCancelacion}
+                  disabled={procesando}
+                  onChange={(e) =>
+                    setMotivoCancelacion(
+                      e.target.value,
                     )
                   }
+                  placeholder="Motivo de cancelación"
+                />
+
+                <button
+                  type="button"
+                  disabled={procesando}
+                  onClick={cancelar}
+                  className="mt-4 w-full rounded-xl bg-red-600 px-4 py-3 font-semibold text-white hover:bg-red-700 disabled:opacity-50"
                 >
-                  Ver detalle
+                  Cancelar apartado
                 </button>
-              ),
-            },
-          ]}
-        />
+              </Card>
+            )}
+        </div>
       </div>
 
-      <ModalApartadoExitoso
-        abierto={Boolean(apartadoExitoso)}
-        codigoApartado={
-          apartadoExitoso?.codigo_apartado ||
-          ""
-        }
-        cliente={
-          apartadoExitoso?.cliente || ""
-        }
-        total={apartadoExitoso?.total || 0}
-        enganche={
-          apartadoExitoso?.enganche || 0
-        }
-        saldo={
-          apartadoExitoso?.saldo_pendiente ||
-          0
-        }
-        onVerDetalle={() => {
-          if (!apartadoExitoso) {
-            return;
-          }
+      {mostrarReciboApartado && (
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/70 p-4 md:p-8"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Vale de apartado"
+        >
+          <div className="w-full max-w-5xl">
+            <div className="print:hidden mb-3 flex justify-end">
+              <button
+                type="button"
+                onClick={() =>
+                  setMostrarReciboApartado(false)
+                }
+                className="rounded-xl bg-white px-4 py-2 font-semibold text-slate-800 shadow hover:bg-slate-100"
+              >
+                Cerrar
+              </button>
+            </div>
 
-          navigate(
-            `/apartados/${apartadoExitoso.id_apartado}`,
-          );
-        }}
-        onNuevoApartado={() =>
-          setApartadoExitoso(null)
-        }
-      />
+            <ReciboApartado
+              codigoApartado={
+                apartado.codigo_apartado
+              }
+              fechaApartado={
+                apartado.fecha_apartado
+              }
+              cliente={apartado.cliente}
+              sucursal={apartado.sucursal}
+              usuario={apartado.usuario}
+              total={apartado.total}
+              enganche={apartado.enganche}
+              saldoPendiente={
+                apartado.saldo_pendiente
+              }
+              cantidadCuotas={
+                apartado.cantidad_cuotas
+              }
+              frecuenciaPago={
+                apartado.frecuencia_pago
+              }
+              fechaPrimerPago={
+                apartado.fecha_primer_pago
+              }
+              detalles={apartado.detalles}
+              cuotas={apartado.cuotas}
+            />
+          </div>
+        </div>
+      )}
+
+      {pagoSeleccionado && (
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/70 p-4 md:p-8"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Recibo de abono"
+        >
+          <div className="w-full max-w-2xl">
+            <div className="print:hidden mb-3 flex justify-end">
+              <button
+                type="button"
+                onClick={() =>
+                  setPagoSeleccionado(null)
+                }
+                className="rounded-xl bg-white px-4 py-2 font-semibold text-slate-800 shadow hover:bg-slate-100"
+              >
+                Cerrar
+              </button>
+            </div>
+
+            {(() => {
+              const {
+                saldoAnterior,
+                saldoNuevo,
+              } = obtenerSaldosPago(
+                pagoSeleccionado,
+              );
+
+              return (
+                <ReciboAbono
+                  codigoApartado={
+                    apartado.codigo_apartado
+                  }
+                  cliente={apartado.cliente}
+                  fecha={pagoSeleccionado.fecha}
+                  metodoPago={
+                    pagoSeleccionado.metodo_pago
+                  }
+                  referencia={
+                    pagoSeleccionado.referencia
+                  }
+                  monto={pagoSeleccionado.monto}
+                  saldoAnterior={saldoAnterior}
+                  saldoNuevo={saldoNuevo}
+                  usuario={apartado.usuario}
+                  sucursal={apartado.sucursal}
+                />
+              );
+            })()}
+          </div>
+        </div>
+      )}
     </Layout>
   );
 }
