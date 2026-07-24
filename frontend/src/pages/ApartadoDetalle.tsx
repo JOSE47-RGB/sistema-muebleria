@@ -96,6 +96,22 @@ type DetalleApartado = {
       | "CANCELADA";
   }>;
 
+  plan_pagos: {
+    cantidad_cuotas: number;
+    cuotas_generadas: number;
+    cuotas_pagadas: number;
+    cuotas_pendientes: number;
+    frecuencia_pago:
+      | "SEMANAL"
+      | "QUINCENAL"
+      | "MENSUAL"
+      | null;
+    fecha_primer_pago: string | null;
+    proxima_cuota: number | null;
+    proxima_fecha_pago: string | null;
+    proximo_monto: number | null;
+  };
+
   pagos: Array<{
     id_pago: number;
     token_operacion: string | null;
@@ -517,6 +533,30 @@ export default function ApartadoDetalle() {
     apartado.elegible_entrega &&
     apartado.entregado === 0;
 
+  const nombreFrecuencia = (() => {
+    switch (apartado.frecuencia_pago) {
+      case "SEMANAL":
+        return "Semanal";
+      case "QUINCENAL":
+        return "Quincenal";
+      case "MENSUAL":
+        return "Mensual";
+      default:
+        return "-";
+    }
+  })();
+
+  const cuotasPagadas =
+    apartado.plan_pagos?.cuotas_pagadas ?? 0;
+
+  const totalCuotas =
+    apartado.plan_pagos?.cantidad_cuotas ??
+    apartado.cantidad_cuotas ??
+    0;
+
+  const proximaCuota =
+    apartado.plan_pagos?.proxima_cuota ?? null;
+
   return (
     <Layout>
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
@@ -633,9 +673,11 @@ export default function ApartadoDetalle() {
                 </p>
 
                 <p className="font-semibold">
-                  {apartado.cantidad_cuotas || 0}{" "}
-                  cuotas -{" "}
-                  {apartado.frecuencia_pago || "-"}
+                  {cuotasPagadas}/{totalCuotas} cuotas pagadas
+                </p>
+
+                <p className="text-sm text-slate-500">
+                  Plan de {totalCuotas} cuotas · {nombreFrecuencia}
                 </p>
               </div>
 
@@ -645,11 +687,27 @@ export default function ApartadoDetalle() {
                 </p>
 
                 <p className="font-semibold">
-                  {apartado.fecha_primer_pago
+                  {proximaCuota !== null
+                    ? `Cuota ${proximaCuota}/${totalCuotas}`
+                    : totalCuotas > 0
+                      ? "Plan completado"
+                      : "-"}
+                </p>
+
+                <p className="text-sm text-slate-500">
+                  {apartado.plan_pagos?.proxima_fecha_pago
                     ? new Date(
-                        `${apartado.fecha_primer_pago}T00:00:00`,
+                        `${apartado.plan_pagos.proxima_fecha_pago}T00:00:00`,
                       ).toLocaleDateString()
-                    : "-"}
+                    : apartado.fecha_primer_pago
+                      ? new Date(
+                          `${apartado.fecha_primer_pago}T00:00:00`,
+                        ).toLocaleDateString()
+                      : "-"}
+                  {apartado.plan_pagos?.proximo_monto !== null &&
+                  apartado.plan_pagos?.proximo_monto !== undefined
+                    ? ` · Q${apartado.plan_pagos.proximo_monto.toFixed(2)}`
+                    : ""}
                 </p>
               </div>
 
@@ -864,8 +922,16 @@ export default function ApartadoDetalle() {
                 </span>
               </div>
 
+              <div className="flex justify-between">
+                <span>Pago inicial</span>
+
+                <span className="font-bold">
+                  Q{apartado.enganche.toFixed(2)}
+                </span>
+              </div>
+
               <div className="flex justify-between text-blue-700">
-                <span>Pagado</span>
+                <span>Pagado total</span>
 
                 <span className="font-bold">
                   Q

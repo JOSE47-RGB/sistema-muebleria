@@ -389,6 +389,9 @@ export class ApartadosService {
           a.total,
           a.enganche,
           a.saldo_pendiente,
+          a.cantidad_cuotas,
+          a.frecuencia_pago,
+          a.fecha_primer_pago,
           a.entregado,
           a.fecha_entrega,
           a.observaciones,
@@ -470,10 +473,31 @@ export class ApartadosService {
         WHERE pg.id_apartado = ${idApartado}
         ORDER BY pg.fecha, pg.id_pago
       `;
+        const cuotas = await this.listarCuotas(
+            idApartado,
+            idUsuario,
+        );
+
         const apartado = apartados[0];
         const total = Number(apartado.total);
         const saldo = Number(apartado.saldo_pendiente);
         const porcentaje = Number(apartado.porcentaje_pagado);
+
+        const cantidadCuotas = Number(
+            apartado.cantidad_cuotas ?? 0,
+        );
+
+        const cuotasPagadas = cuotas.filter(
+            (cuota) =>
+                Number(cuota.saldo) <= 0 ||
+                cuota.estado_calculado === 'PAGADA',
+        ).length;
+
+        const proximaCuota =
+            cuotas.find(
+                (cuota) => Number(cuota.saldo) > 0,
+            ) ?? null;
+
         return {
             id_apartado: Number(apartado.id_apartado),
             codigo_apartado: apartado.codigo_apartado,
@@ -485,6 +509,9 @@ export class ApartadosService {
             total,
             enganche: Number(apartado.enganche),
             saldo_pendiente: saldo,
+            cantidad_cuotas: cantidadCuotas,
+            frecuencia_pago: apartado.frecuencia_pago,
+            fecha_primer_pago: apartado.fecha_primer_pago,
             total_pagado: Number((total - saldo).toFixed(2)),
             porcentaje_pagado: porcentaje,
             elegible_entrega: porcentaje >= 85,
@@ -516,6 +543,27 @@ export class ApartadosService {
                 descuento: Number(detalle.descuento),
                 subtotal: Number(detalle.subtotal),
             })),
+            cuotas,
+            plan_pagos: {
+                cantidad_cuotas: cantidadCuotas,
+                cuotas_generadas: cuotas.length,
+                cuotas_pagadas: cuotasPagadas,
+                cuotas_pendientes: Math.max(
+                    cantidadCuotas - cuotasPagadas,
+                    0,
+                ),
+                frecuencia_pago: apartado.frecuencia_pago,
+                fecha_primer_pago: apartado.fecha_primer_pago,
+                proxima_cuota: proximaCuota
+                    ? Number(proximaCuota.numero_cuota)
+                    : null,
+                proxima_fecha_pago: proximaCuota
+                    ? proximaCuota.fecha_vencimiento
+                    : null,
+                proximo_monto: proximaCuota
+                    ? Number(proximaCuota.saldo)
+                    : null,
+            },
             pagos: pagos.map((pago) => ({
                 id_pago: Number(pago.id_pago),
                 token_operacion: pago.token_operacion,
