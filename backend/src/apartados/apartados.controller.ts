@@ -39,7 +39,9 @@ export class ApartadosController {
 
   @Get('catalogos')
   @Permiso('apartados.ver')
-  catalogos(@Req() request: RequestConUsuario) {
+  catalogos(
+    @Req() request: RequestConUsuario,
+  ) {
     return this.apartadosService.catalogos(
       Number(request.user.sub),
     );
@@ -62,8 +64,7 @@ export class ApartadosController {
   }
 
   /*
-   * Esta ruta debe ir antes de @Get(':id').
-   * Permite consultar el calendario de pagos:
+   * Esta ruta debe declararse antes de @Get(':id').
    * GET /apartados/1/cuotas
    */
   @Get(':id/cuotas')
