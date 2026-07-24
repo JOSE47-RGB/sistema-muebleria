@@ -379,10 +379,32 @@ export default function ApartadoDetalle() {
         "Abono registrado correctamente",
       );
     } catch (error: any) {
-      alert(
-        error.response?.data?.message ||
-          "No fue posible registrar el abono",
+      console.error(
+        "Error completo al registrar apartado:",
+        error,
       );
+
+      console.error(
+        "Respuesta del backend:",
+        error.response?.data,
+      );
+
+      const respuesta = error.response?.data;
+
+      let mensaje =
+        "No fue posible completar la operación de ApartadoYA";
+
+      if (typeof respuesta?.message === "string") {
+        mensaje = respuesta.message;
+      } else if (Array.isArray(respuesta?.message)) {
+        mensaje = respuesta.message.join("\n");
+      } else if (respuesta?.error) {
+        mensaje = respuesta.error;
+      } else if (error.message) {
+        mensaje = error.message;
+      }
+
+      alert(mensaje);
     } finally {
       setProcesando(false);
     }
