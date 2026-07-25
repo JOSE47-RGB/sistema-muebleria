@@ -130,6 +130,24 @@ type MetodoPago = {
   nombre: string;
   requiere_referencia: number;
 };
+type ResumenCancelacion = {
+  codigo_apartado: string;
+  total_pagado: number;
+  porcentaje_retencion: number;
+  monto_retenido: number;
+  monto_devolver: number;
+  estado_devolucion:
+    | "NO_APLICA"
+    | "PENDIENTE"
+    | "PARCIAL"
+    | "DEVUELTA";
+};
+
+type RespuestaCancelarApartado = {
+  mensaje: string;
+  cancelacion: ResumenCancelacion;
+  apartado: DetalleApartado;
+};
 
 type CatalogosApartado = {
   politica: {
@@ -167,6 +185,18 @@ export default function ApartadoDetalle() {
 
   const [motivoCancelacion, setMotivoCancelacion] =
     useState("");
+
+  const [
+    observacionesCancelacion,
+    setObservacionesCancelacion,
+  ] = useState("");
+
+  const [
+    resumenCancelacion,
+    setResumenCancelacion,
+  ] = useState<ResumenCancelacion | null>(
+    null,
+  );
 
   const [cargando, setCargando] =
     useState(true);
@@ -466,18 +496,29 @@ export default function ApartadoDetalle() {
       return;
     }
 
-    const motivo =
-      motivoCancelacion.trim();
+    const motivo = motivoCancelacion.trim();
+
+    const observaciones =
+      observacionesCancelacion.trim() || null;
 
     if (motivo.length < 5) {
       alert(
-        "Indique un motivo de cancelación",
+        "Indique un motivo de cancelación de al menos 5 caracteres",
       );
+
       return;
     }
 
     const confirmar = window.confirm(
-      "¿Cancelar el apartado y liberar los productos reservados?",
+      [
+        "¿Confirmas la cancelación del apartado?",
+        "",
+        "Al continuar:",
+        "- Los productos reservados volverán a estar disponibles.",
+        "- Las cuotas pendientes serán canceladas.",
+        "- Se calculará el monto que debe devolverse.",
+        "- La devolución quedará pendiente hasta que caja la confirme.",
+      ].join(""),
     );
 
     if (!confirmar) {
@@ -487,25 +528,54 @@ export default function ApartadoDetalle() {
     try {
       setProcesando(true);
 
-      await api.patch(
-        `/apartados/${apartado.id_apartado}/cancelar`,
-        {
-          motivo,
-        },
-      );
+      const respuesta =
+        await api.patch<RespuestaCancelarApartado>(
+          `/apartados/${apartado.id_apartado}/cancelar`,
+          {
+            motivo,
+            observaciones,
+          },
+        );
 
       setMotivoCancelacion("");
+      setObservacionesCancelacion("");
 
-      await cargar();
+      setResumenCancelacion(
+        respuesta.data.cancelacion,
+      );
+
+      if (respuesta.data.apartado) {
+        setApartado(respuesta.data.apartado);
+      } else {
+        await cargar();
+      }
 
       alert(
-        "Apartado cancelado correctamente",
+        respuesta.data.mensaje ||
+          "Apartado cancelado correctamente",
       );
     } catch (error: any) {
-      alert(
-        error.response?.data?.message ||
-          "No fue posible cancelar el apartado",
+      console.error(
+        "Error al cancelar apartado:",
+        error,
       );
+
+      const respuesta = error.response?.data;
+
+      let mensaje =
+        "No fue posible cancelar el apartado";
+
+      if (typeof respuesta?.message === "string") {
+        mensaje = respuesta.message;
+      } else if (
+        Array.isArray(respuesta?.message)
+      ) {
+        mensaje = respuesta.message.join("");
+      } else if (respuesta?.error) {
+        mensaje = respuesta.error;
+      }
+
+      alert(mensaje);
     } finally {
       setProcesando(false);
     }
@@ -908,6 +978,80 @@ export default function ApartadoDetalle() {
         </div>
 
         <div className="space-y-6">
+          {resumenCancelacion && (
+            <Card className="border border-red-200 bg-red-50">
+              <h2 className="text-lg font-bold text-red-800">
+                Cancelación registrada
+              </h2>
+
+              <p className="mt-1 text-sm text-red-700">
+                {resumenCancelacion.codigo_apartado}
+              </p>
+
+              <div className="mt-4 space-y-3 text-sm">
+                <div className="flex justify-between">
+                  <span>Total pagado</span>
+
+                  <span className="font-bold">
+                    Q
+                    {resumenCancelacion.total_pagado.toFixed(
+                      2,
+                    )}
+                  </span>
+                </div>
+
+                <div className="flex justify-between">
+                  <span>
+                    Retención (
+                    {resumenCancelacion.porcentaje_retencion.toFixed(
+                      2,
+                    )}
+                    %)
+                  </span>
+
+                  <span className="font-bold">
+                    Q
+                    {resumenCancelacion.monto_retenido.toFixed(
+                      2,
+                    )}
+                  </span>
+                </div>
+
+                <div className="flex justify-between border-t border-red-200 pt-3 text-base">
+                  <span className="font-bold">
+                    Monto a devolver
+                  </span>
+
+                  <span className="font-bold text-red-700">
+                    Q
+                    {resumenCancelacion.monto_devolver.toFixed(
+                      2,
+                    )}
+                  </span>
+                </div>
+
+                <div className="flex justify-between">
+                  <span>Estado de devolución</span>
+
+                  <Badge
+                    texto={
+                      resumenCancelacion.estado_devolucion
+                    }
+                    tipo={
+                      resumenCancelacion.estado_devolucion ===
+                      "DEVUELTA"
+                        ? "verde"
+                        : resumenCancelacion.estado_devolucion ===
+                            "PENDIENTE"
+                          ? "amarillo"
+                          : "rojo"
+                    }
+                  />
+                </div>
+              </div>
+            </Card>
+          )}
+
           <Card>
             <h2 className="mb-5 text-xl font-bold">
               Resumen
@@ -1063,30 +1207,77 @@ export default function ApartadoDetalle() {
           {estaActivo &&
             apartado.entregado === 0 && (
               <Card className="border border-red-200">
-                <h2 className="mb-4 text-lg font-bold text-red-700">
+                <h2 className="mb-2 text-lg font-bold text-red-700">
                   Cancelar apartado
                 </h2>
 
-                <Input
-                  label="Motivo"
-                  value={motivoCancelacion}
-                  disabled={procesando}
-                  onChange={(e) =>
-                    setMotivoCancelacion(
-                      e.target.value,
-                    )
-                  }
-                  placeholder="Motivo de cancelación"
-                />
+                <p className="mb-4 text-sm text-slate-600">
+                  Al cancelar, los productos reservados
+                  volverán al inventario disponible y se
+                  calculará el monto pendiente de devolución.
+                </p>
 
-                <button
-                  type="button"
-                  disabled={procesando}
-                  onClick={cancelar}
-                  className="mt-4 w-full rounded-xl bg-red-600 px-4 py-3 font-semibold text-white hover:bg-red-700 disabled:opacity-50"
-                >
-                  Cancelar apartado
-                </button>
+                <div className="space-y-4">
+                  <Input
+                    label="Motivo"
+                    value={motivoCancelacion}
+                    disabled={procesando}
+                    onChange={(e) =>
+                      setMotivoCancelacion(
+                        e.target.value,
+                      )
+                    }
+                    placeholder="Ejemplo: el cliente desistió de la compra"
+                  />
+
+                  <div>
+                    <label className="mb-2 block text-sm font-semibold text-slate-700">
+                      Observaciones
+                    </label>
+
+                    <textarea
+                      value={observacionesCancelacion}
+                      disabled={procesando}
+                      onChange={(e) =>
+                        setObservacionesCancelacion(
+                          e.target.value,
+                        )
+                      }
+                      placeholder="Información adicional opcional"
+                      rows={4}
+                      className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100"
+                    />
+                  </div>
+
+                  <div className="rounded-xl bg-amber-50 p-4 text-sm text-amber-800">
+                    <p className="font-semibold">
+                      Dinero recibido hasta ahora
+                    </p>
+
+                    <p className="mt-1 text-lg font-bold">
+                      Q{apartado.total_pagado.toFixed(2)}
+                    </p>
+
+                    <p className="mt-2">
+                      El monto definitivo a devolver se
+                      calculará según la política configurada.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={
+                      procesando ||
+                      motivoCancelacion.trim().length < 5
+                    }
+                    onClick={cancelar}
+                    className="w-full rounded-xl bg-red-600 px-4 py-3 font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {procesando
+                      ? "Cancelando..."
+                      : "Cancelar apartado"}
+                  </button>
+                </div>
               </Card>
             )}
         </div>

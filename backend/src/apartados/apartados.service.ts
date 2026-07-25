@@ -1410,40 +1410,104 @@ export class ApartadosService {
             apartado: await this.obtener(idApartado, idUsuario),
         };
     }
-    async cancelar(idApartado: number, data: CancelarApartadoDto, idUsuario: number) {
-        this.validarId(idApartado, 'Identificador de apartado inválido');
-        const motivo = data.motivo?.trim();
-        if (!motivo || motivo.length < 5) {
-            throw new BadRequestException('Debes indicar el motivo de cancelación');
-        }
-        const contexto = await this.obtenerContextoUsuario(idUsuario);
-        await this.prisma.$transaction(async (tx) => {
-            const apartados: any[] = await tx.$queryRaw `
+    async cancelar(
+  idApartado: number,
+  data: CancelarApartadoDto,
+  idUsuario: number,
+) {
+  this.validarId(
+    idApartado,
+    'Identificador de apartado inválido',
+  );
+
+  const motivo = data.motivo?.trim();
+  const observaciones =
+    data.observaciones?.trim() || null;
+
+  if (!motivo || motivo.length < 5) {
+    throw new BadRequestException(
+      'Debes indicar un motivo de cancelación válido',
+    );
+  }
+
+  const contexto =
+    await this.obtenerContextoUsuario(idUsuario);
+
+  const resultado =
+    await this.prisma.$transaction(
+      async (tx) => {
+        /*
+         * Bloqueamos el apartado mientras se procesa
+         * la cancelación para evitar operaciones dobles.
+         */
+        const apartados: any[] =
+          await tx.$queryRaw`
             SELECT
+              a.id_apartado,
               a.codigo_apartado,
+              a.id_turno,
+              a.total,
+              a.enganche,
+              a.saldo_pendiente,
               a.entregado,
               es.codigo AS codigo_estado
+
             FROM apartados a
+
             INNER JOIN estados_sistema es
               ON es.id_estado = a.id_estado
-            WHERE a.id_apartado =
-                  ${idApartado}
+
+            WHERE a.id_apartado = ${idApartado}
               AND a.id_sucursal =
                   ${contexto.id_sucursal}
+
             LIMIT 1
             FOR UPDATE
           `;
-            if (apartados.length === 0) {
-                throw new NotFoundException('Apartado no encontrado');
-            }
-            const apartado = apartados[0];
-            if (apartado.codigo_estado !== 'ACTIVO') {
-                throw new BadRequestException('Solo se puede cancelar un apartado activo');
-            }
-            if (Number(apartado.entregado) === 1) {
-                throw new BadRequestException('No se puede cancelar porque los productos ya fueron entregados');
-            }
-            const estadoCancelado: any[] = await tx.$queryRaw `
+
+        if (apartados.length === 0) {
+          throw new NotFoundException(
+            'Apartado no encontrado',
+          );
+        }
+
+        const apartado = apartados[0];
+
+        if (apartado.codigo_estado !== 'ACTIVO') {
+          throw new BadRequestException(
+            'Solo se puede cancelar un apartado activo',
+          );
+        }
+
+        if (Number(apartado.entregado) === 1) {
+          throw new BadRequestException(
+            'No se puede cancelar porque los productos ya fueron entregados',
+          );
+        }
+
+        /*
+         * Verificamos que no exista una cancelación
+         * registrada previamente.
+         */
+        const cancelacionExistente: any[] =
+          await tx.$queryRaw`
+            SELECT id_cancelacion
+            FROM apartado_cancelaciones
+            WHERE id_apartado = ${idApartado}
+            LIMIT 1
+          `;
+
+        if (cancelacionExistente.length > 0) {
+          throw new BadRequestException(
+            'Este apartado ya tiene una cancelación registrada',
+          );
+        }
+
+        /*
+         * Estado CANCELADO del apartado.
+         */
+        const estadosApartado: any[] =
+          await tx.$queryRaw`
             SELECT id_estado
             FROM estados_sistema
             WHERE modulo = 'APARTADO'
@@ -1451,41 +1515,90 @@ export class ApartadosService {
               AND estado = 1
             LIMIT 1
           `;
-            const tipoLiberacion: any[] = await tx.$queryRaw `
+
+        if (estadosApartado.length === 0) {
+          throw new BadRequestException(
+            'No existe el estado APARTADO/CANCELADO',
+          );
+        }
+
+        const idEstadoCancelado = Number(
+          estadosApartado[0].id_estado,
+        );
+
+        /*
+         * Tipo de movimiento utilizado para devolver
+         * los productos reservados al inventario disponible.
+         */
+        const tiposLiberacion: any[] =
+          await tx.$queryRaw`
             SELECT id_tipo_movimiento
             FROM tipos_movimiento_inventario
-            WHERE codigo =
-                  'LIBERACION_APARTADO'
+            WHERE codigo = 'LIBERACION_APARTADO'
               AND estado = 1
             LIMIT 1
           `;
-            if (estadoCancelado.length === 0 ||
-                tipoLiberacion.length === 0) {
-                throw new BadRequestException('Falta configuración para cancelar apartados');
-            }
-            const detalles: any[] = await tx.$queryRaw `
-            SELECT id_variante, cantidad
-            FROM apartado_detalle
-            WHERE id_apartado = ${idApartado}
-            ORDER BY id_variante
+
+        if (tiposLiberacion.length === 0) {
+          throw new BadRequestException(
+            'No existe el tipo de movimiento LIBERACION_APARTADO',
+          );
+        }
+
+        const idTipoLiberacion = Number(
+          tiposLiberacion[0].id_tipo_movimiento,
+        );
+
+        /*
+         * Productos reservados por el apartado.
+         */
+        const detalles: any[] =
+          await tx.$queryRaw`
+            SELECT
+              ad.id_variante,
+              ad.cantidad
+            FROM apartado_detalle ad
+            WHERE ad.id_apartado = ${idApartado}
+            ORDER BY ad.id_variante
           `;
-            for (const detalle of detalles) {
-                const cantidad = Number(detalle.cantidad);
-                const actualizados = await tx.$executeRaw `
+
+        if (detalles.length === 0) {
+          throw new BadRequestException(
+            'El apartado no contiene productos reservados',
+          );
+        }
+
+        /*
+         * Liberación del stock reservado.
+         *
+         * No aumentamos stock_actual porque el producto
+         * nunca salió físicamente de la tienda.
+         */
+        for (const detalle of detalles) {
+          const idVariante = Number(
+            detalle.id_variante,
+          );
+
+          const cantidad = Number(detalle.cantidad);
+
+          const filasActualizadas =
+            await tx.$executeRaw`
               UPDATE inventario_sucursal
               SET stock_reservado =
                   stock_reservado - ${cantidad}
               WHERE id_sucursal =
                     ${contexto.id_sucursal}
-                AND id_variante =
-                    ${Number(detalle.id_variante)}
-                AND stock_reservado >=
-                    ${cantidad}
+                AND id_variante = ${idVariante}
+                AND stock_reservado >= ${cantidad}
             `;
-                if (Number(actualizados) !== 1) {
-                    throw new BadRequestException('No fue posible liberar el inventario reservado');
-                }
-                await tx.$executeRaw `
+
+          if (Number(filasActualizadas) !== 1) {
+            throw new BadRequestException(
+              `No fue posible liberar el inventario de la variante ${idVariante}`,
+            );
+          }
+
+          await tx.$executeRaw`
             INSERT INTO inventario_movimientos (
               id_sucursal,
               id_variante,
@@ -1495,46 +1608,265 @@ export class ApartadosService {
               referencia,
               descripcion,
               fecha
-            ) VALUES (
+            )
+            VALUES (
               ${contexto.id_sucursal},
-              ${Number(detalle.id_variante)},
+              ${idVariante},
               ${idUsuario},
-              ${Number(tipoLiberacion[0]
-                    .id_tipo_movimiento)},
+              ${idTipoLiberacion},
               ${cantidad},
               ${apartado.codigo_apartado},
               ${`Liberación por cancelación: ${motivo}`},
               NOW()
             )
           `;
-            }
-            await tx.$executeRaw `
+        }
+
+        /*
+         * Buscamos el estado CANCELADA de las cuotas.
+         * Si existe, cancelamos únicamente las que
+         * todavía tienen saldo pendiente.
+         */
+        const estadosCuotaCancelada: any[] =
+          await tx.$queryRaw`
+            SELECT id_estado
+            FROM estados_sistema
+            WHERE modulo = 'CUOTA'
+              AND codigo IN (
+                'CANCELADA',
+                'CANCELADO'
+              )
+              AND estado = 1
+            ORDER BY
+              CASE
+                WHEN codigo = 'CANCELADA' THEN 1
+                ELSE 2
+              END
+            LIMIT 1
+          `;
+
+        if (estadosCuotaCancelada.length > 0) {
+          const idEstadoCuotaCancelada = Number(
+            estadosCuotaCancelada[0].id_estado,
+          );
+
+          await tx.$executeRaw`
+            UPDATE venta_cuotas
+            SET
+              id_estado = ${idEstadoCuotaCancelada},
+              updated_at = NOW()
+            WHERE tipo_origen = 'APARTADO'
+              AND id_apartado = ${idApartado}
+              AND saldo > 0
+          `;
+        }
+
+        /*
+         * Calculamos el dinero realmente recibido.
+         * Usamos pagos para no confiar únicamente
+         * en el saldo almacenado en apartados.
+         */
+        const resumenPagos: any[] =
+          await tx.$queryRaw`
+            SELECT
+              COALESCE(SUM(p.monto), 0) AS total_pagado
+            FROM pagos p
+            WHERE p.id_apartado = ${idApartado}
+          `;
+
+        const totalPagado = Number(
+          resumenPagos[0]?.total_pagado ?? 0,
+        );
+
+        /*
+         * Método de pago del último pago recibido.
+         * Puede quedar NULL cuando no existen pagos.
+         */
+        const ultimosPagos: any[] =
+          await tx.$queryRaw`
+            SELECT p.id_metodo_pago
+            FROM pagos p
+            WHERE p.id_apartado = ${idApartado}
+            ORDER BY
+              p.fecha_pago DESC,
+              p.id_pago DESC
+            LIMIT 1
+          `;
+
+        const idMetodoPago =
+          ultimosPagos.length > 0
+            ? Number(
+                ultimosPagos[0].id_metodo_pago,
+              )
+            : null;
+
+        /*
+         * Porcentaje de retención configurable.
+         * Ejemplo:
+         * 0  = se devuelve todo.
+         * 10 = se retiene el 10 %.
+         */
+        const configuraciones: any[] =
+          await tx.$queryRaw`
+            SELECT valor
+            FROM configuraciones
+            WHERE clave =
+              'APARTADO_PORCENTAJE_RETENCION_CANCELACION'
+              AND estado = 1
+            LIMIT 1
+          `;
+
+        let porcentajeRetencion = Number(
+          configuraciones[0]?.valor ?? 0,
+        );
+
+        if (
+          !Number.isFinite(porcentajeRetencion) ||
+          porcentajeRetencion < 0
+        ) {
+          porcentajeRetencion = 0;
+        }
+
+        if (porcentajeRetencion > 100) {
+          porcentajeRetencion = 100;
+        }
+
+        const montoRetenido = Number(
+          (
+            totalPagado *
+            (porcentajeRetencion / 100)
+          ).toFixed(2),
+        );
+
+        const montoDevolver = Number(
+          Math.max(
+            totalPagado - montoRetenido,
+            0,
+          ).toFixed(2),
+        );
+
+        const estadoDevolucion =
+          montoDevolver > 0
+            ? 'PENDIENTE'
+            : 'NO_APLICA';
+
+        /*
+         * Registramos la cancelación.
+         *
+         * No se registra todavía una salida de caja.
+         * La salida debe crearse cuando el cajero
+         * confirme que entregó el efectivo.
+         */
+        await tx.$executeRaw`
+          INSERT INTO apartado_cancelaciones (
+            id_apartado,
+            id_usuario_cancelacion,
+            id_turno,
+            id_metodo_pago,
+            id_caja_movimiento,
+            total_pagado,
+            porcentaje_retencion,
+            monto_retenido,
+            monto_devolver,
+            monto_devuelto,
+            estado_devolucion,
+            motivo,
+            observaciones,
+            fecha_cancelacion,
+            fecha_devolucion,
+            id_usuario_devolucion,
+            created_at,
+            updated_at
+          )
+          VALUES (
+            ${idApartado},
+            ${idUsuario},
+            ${apartado.id_turno
+              ? Number(apartado.id_turno)
+              : null},
+            ${idMetodoPago},
+            NULL,
+            ${totalPagado},
+            ${porcentajeRetencion},
+            ${montoRetenido},
+            ${montoDevolver},
+            0,
+            ${estadoDevolucion},
+            ${motivo},
+            ${observaciones},
+            NOW(),
+            NULL,
+            NULL,
+            NOW(),
+            NULL
+          )
+        `;
+
+        /*
+         * Finalmente cambiamos el apartado a CANCELADO.
+         */
+        const textoObservacion = observaciones
+          ? `Cancelado: ${motivo}. ${observaciones}`
+          : `Cancelado: ${motivo}`;
+
+        await tx.$executeRaw`
           UPDATE apartados
           SET
-            id_estado =
-              ${Number(estadoCancelado[0].id_estado)},
+            id_estado = ${idEstadoCancelado},
+
             observaciones = CONCAT(
               COALESCE(observaciones, ''),
+
               CASE
                 WHEN observaciones IS NULL
-                     OR observaciones = ''
+                  OR TRIM(observaciones) = ''
                 THEN ''
                 ELSE ' | '
               END,
-              ${`Cancelado: ${motivo}`}
+
+              ${textoObservacion}
             )
+
           WHERE id_apartado = ${idApartado}
         `;
-        }, {
-            isolationLevel: Prisma.TransactionIsolationLevel
-                .Serializable,
-            timeout: 30000,
-        });
+
         return {
-            mensaje: 'Apartado cancelado correctamente',
-            apartado: await this.obtener(idApartado, idUsuario),
+          codigo_apartado:
+            apartado.codigo_apartado,
+
+          total_pagado: totalPagado,
+
+          porcentaje_retencion:
+            porcentajeRetencion,
+
+          monto_retenido: montoRetenido,
+
+          monto_devolver: montoDevolver,
+
+          estado_devolucion:
+            estadoDevolucion,
         };
-    }
+      },
+      {
+        isolationLevel:
+          Prisma.TransactionIsolationLevel
+            .Serializable,
+
+        timeout: 30000,
+      },
+    );
+
+  return {
+    mensaje: 'Apartado cancelado correctamente',
+
+    cancelacion: resultado,
+
+    apartado: await this.obtener(
+      idApartado,
+      idUsuario,
+    ),
+  };
+}
     private async generarDocumentoApartadoTx(tx: Prisma.TransactionClient, data: {
         idApartado: number;
         codigoApartado: string;
