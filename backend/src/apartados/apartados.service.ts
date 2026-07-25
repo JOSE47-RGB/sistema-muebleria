@@ -18,6 +18,19 @@ type TurnoActivo = {
     id_caja: number;
     caja: string;
 };
+
+type AplicacionAbonoCuota = {
+  id_cuota: number;
+  numero_cuota: number;
+  monto_aplicado: number;
+  monto_pagado: number;
+  saldo: number;
+  estado:
+    | "PAGADA"
+    | "PARCIAL"
+    | "PENDIENTE"
+    | "VENCIDA";
+};
 @Injectable()
 export class ApartadosService {
     constructor(private readonly prisma: PrismaService) { }
@@ -381,6 +394,7 @@ export class ApartadosService {
         SELECT
           a.id_apartado,
           a.codigo_apartado,
+          a.token_operacion,
           a.id_cliente,
           a.id_usuario,
           a.id_turno,
@@ -498,6 +512,195 @@ export class ApartadosService {
                 (cuota) => Number(cuota.saldo) > 0,
             ) ?? null;
 
+        /*
+         * Enriquecemos cada pago para que el frontend pueda mostrar:
+         * - número de abono;
+         * - saldo anterior y nuevo saldo;
+         * - total pagado acumulado;
+         * - cuotas afectadas por ese pago;
+         * - cuotas pagadas acumuladas;
+         * - próxima cuota pendiente.
+         *
+         * El enganche forma parte del total pagado, pero no se aplica
+         * a las cuotas porque las cuotas se generan sobre el saldo
+         * posterior al enganche.
+         */
+        const engancheApartado = Number(
+            apartado.enganche ?? 0,
+        );
+
+        let totalPagadoAcumulado = 0;
+        let numeroAbono = 0;
+
+        const pagosConDetalle = pagos.map((pago) => {
+            const montoPago = Number(pago.monto);
+            const totalAntes = totalPagadoAcumulado;
+
+            totalPagadoAcumulado = Number(
+                (totalPagadoAcumulado + montoPago).toFixed(2),
+            );
+
+            const esEnganche =
+                engancheApartado > 0 &&
+                String(pago.token_operacion ?? '') ===
+                    String(apartado.token_operacion ?? '');
+
+            if (!esEnganche) {
+                numeroAbono += 1;
+            }
+
+            const aplicableAntes = Number(
+                Math.max(
+                    totalAntes - engancheApartado,
+                    0,
+                ).toFixed(2),
+            );
+
+            const aplicableDespues = Number(
+                Math.max(
+                    totalPagadoAcumulado -
+                        engancheApartado,
+                    0,
+                ).toFixed(2),
+            );
+
+            let acumuladoProgramado = 0;
+            let cuotasPagadasAcumuladas = 0;
+
+            let proximaCuotaPago: {
+                numero_cuota: number;
+                fecha_vencimiento: unknown;
+                saldo: number;
+            } | null = null;
+
+            const cuotasAplicadas: AplicacionAbonoCuota[] =
+                [];
+
+            for (const cuota of cuotas) {
+                const montoProgramado = Number(
+                    cuota.monto_programado,
+                );
+
+                const pagadoAntes = Number(
+                    Math.min(
+                        montoProgramado,
+                        Math.max(
+                            aplicableAntes -
+                                acumuladoProgramado,
+                            0,
+                        ),
+                    ).toFixed(2),
+                );
+
+                const pagadoDespues = Number(
+                    Math.min(
+                        montoProgramado,
+                        Math.max(
+                            aplicableDespues -
+                                acumuladoProgramado,
+                            0,
+                        ),
+                    ).toFixed(2),
+                );
+
+                const montoAplicado = Number(
+                    Math.max(
+                        pagadoDespues - pagadoAntes,
+                        0,
+                    ).toFixed(2),
+                );
+
+                const saldoCuota = Number(
+                    Math.max(
+                        montoProgramado - pagadoDespues,
+                        0,
+                    ).toFixed(2),
+                );
+
+                if (saldoCuota <= 0) {
+                    cuotasPagadasAcumuladas += 1;
+                } else if (!proximaCuotaPago) {
+                    proximaCuotaPago = {
+                        numero_cuota: Number(
+                            cuota.numero_cuota,
+                        ),
+                        fecha_vencimiento:
+                            cuota.fecha_vencimiento,
+                        saldo: saldoCuota,
+                    };
+                }
+
+                if (montoAplicado > 0) {
+                    cuotasAplicadas.push({
+                        id_cuota: Number(cuota.id_cuota),
+                        numero_cuota: Number(
+                            cuota.numero_cuota,
+                        ),
+                        monto_aplicado: montoAplicado,
+                        monto_pagado: pagadoDespues,
+                        saldo: saldoCuota,
+                        estado:
+                            saldoCuota <= 0
+                                ? 'PAGADA'
+                                : 'PARCIAL',
+                    });
+                }
+
+                acumuladoProgramado = Number(
+                    (
+                        acumuladoProgramado +
+                        montoProgramado
+                    ).toFixed(2),
+                );
+            }
+
+            return {
+                id_pago: Number(pago.id_pago),
+                token_operacion:
+                    pago.token_operacion,
+                id_metodo_pago: Number(
+                    pago.id_metodo_pago,
+                ),
+                codigo_metodo:
+                    pago.codigo_metodo,
+                metodo_pago:
+                    pago.metodo_pago,
+                monto: montoPago,
+                referencia:
+                    pago.referencia,
+                fecha: pago.fecha,
+                tipo_pago: esEnganche
+                    ? 'ENGANCHE'
+                    : 'ABONO',
+                numero_abono: esEnganche
+                    ? 0
+                    : numeroAbono,
+                saldo_anterior: Number(
+                    Math.max(
+                        total - totalAntes,
+                        0,
+                    ).toFixed(2),
+                ),
+                saldo_nuevo: Number(
+                    Math.max(
+                        total -
+                            totalPagadoAcumulado,
+                        0,
+                    ).toFixed(2),
+                ),
+                total_pagado_acumulado:
+                    totalPagadoAcumulado,
+                cuotas_pagadas_acumuladas:
+                    cuotasPagadasAcumuladas,
+                cantidad_cuotas:
+                    cantidadCuotas,
+                proxima_cuota:
+                    proximaCuotaPago,
+                cuotas_aplicadas:
+                    cuotasAplicadas,
+            };
+        });
+
         return {
             id_apartado: Number(apartado.id_apartado),
             codigo_apartado: apartado.codigo_apartado,
@@ -564,16 +767,7 @@ export class ApartadosService {
                     ? Number(proximaCuota.saldo)
                     : null,
             },
-            pagos: pagos.map((pago) => ({
-                id_pago: Number(pago.id_pago),
-                token_operacion: pago.token_operacion,
-                id_metodo_pago: Number(pago.id_metodo_pago),
-                codigo_metodo: pago.codigo_metodo,
-                metodo_pago: pago.metodo_pago,
-                monto: Number(pago.monto),
-                referencia: pago.referencia,
-                fecha: pago.fecha,
-            })),
+            pagos: pagosConDetalle,
         };
     }
 
@@ -843,8 +1037,7 @@ export class ApartadosService {
                   WHERE pv.id_variante =
                         ${idVariante}
                     AND i.id_sucursal =
-                        ${contexto.id_sucursal}
-                    AND pv.estado = 1
+                        ${contexto.id_sucursal}                    AND pv.estado = 1
                     AND p.estado = 1
                   LIMIT 1
                   FOR UPDATE
@@ -1084,190 +1277,701 @@ export class ApartadosService {
             this.manejarError(error);
         }
     }
-    async registrarAbono(idApartado: number, data: RegistrarAbonoDto, idUsuario: number) {
-        this.validarId(idApartado, 'Identificador de apartado inválido');
-        const tokenOperacion = this.normalizarToken(data.token_operacion);
-        const idMetodoPago = Number(data.id_metodo_pago);
+    private async sincronizarCuotasApartadoTx(
+  tx: Prisma.TransactionClient,
+  idApartado: number,
+  idPago: number,
+  montoAbonoActual: number,
+): Promise<AplicacionAbonoCuota[]> {
+  const redondear = (valor: number) =>
+    Number(valor.toFixed(2));
+
+  /*
+   * Obtenemos los estados reales de las cuotas.
+   *
+   * PENDIENTE = 20
+   * PAGADA = 21
+   * ATRASADA = 22
+   *
+   * No necesitamos un estado PARCIAL en la BD.
+   * PARCIAL se calcula cuando:
+   * monto_pagado > 0 y saldo > 0.
+   */
+  const estados: any[] =
+    await tx.$queryRaw`
+      SELECT
+        id_estado,
+        codigo
+      FROM estados_sistema
+      WHERE modulo = 'CUOTA'
+        AND codigo IN (
+          'PENDIENTE',
+          'PAGADA',
+          'ATRASADA'
+        )
+        AND estado = 1
+    `;
+
+  const estadosPorCodigo =
+    new Map<string, number>();
+
+  for (const estado of estados) {
+    estadosPorCodigo.set(
+      String(estado.codigo),
+      Number(estado.id_estado),
+    );
+  }
+
+  const idEstadoPendiente =
+    estadosPorCodigo.get("PENDIENTE");
+
+  const idEstadoPagada =
+    estadosPorCodigo.get("PAGADA");
+
+  const idEstadoAtrasada =
+    estadosPorCodigo.get("ATRASADA") ??
+    idEstadoPendiente;
+
+  if (
+    !idEstadoPendiente ||
+    !idEstadoPagada
+  ) {
+    throw new BadRequestException(
+      "No existen los estados necesarios para las cuotas",
+    );
+  }
+
+  /*
+   * Obtenemos el total recibido.
+   *
+   * El enganche se resta porque las cuotas fueron
+   * generadas sobre el saldo posterior al enganche.
+   */
+  const resumenPagos: any[] =
+    await tx.$queryRaw`
+      SELECT
+        a.enganche,
+        COALESCE(
+          SUM(p.monto),
+          0
+        ) AS total_pagado
+
+      FROM apartados a
+
+      LEFT JOIN pagos p
+        ON p.id_apartado = a.id_apartado
+
+      WHERE a.id_apartado = ${idApartado}
+
+      GROUP BY
+        a.id_apartado,
+        a.enganche
+    `;
+
+  if (resumenPagos.length === 0) {
+    throw new BadRequestException(
+      "No fue posible obtener el resumen de pagos",
+    );
+  }
+
+  const enganche = Number(
+    resumenPagos[0].enganche ?? 0,
+  );
+
+  const totalPagado = Number(
+    resumenPagos[0].total_pagado ?? 0,
+  );
+
+  /*
+   * Este es el dinero que realmente debe repartirse
+   * entre las cuotas.
+   */
+  const totalAplicable = redondear(
+    Math.max(totalPagado - enganche, 0),
+  );
+
+  /*
+   * Total que ya existía antes del abono actual.
+   * Se usa para saber qué cuotas afectó específicamente
+   * el nuevo pago.
+   */
+  const totalAplicableAnterior =
+    redondear(
+      Math.max(
+        totalAplicable - montoAbonoActual,
+        0,
+      ),
+    );
+
+  /*
+   * No filtramos por fecha.
+   *
+   * De esta forma el cliente puede:
+   * - pagar anticipadamente;
+   * - pagar varias cuotas;
+   * - hacer un abono parcial;
+   * - cancelar el saldo antes de tiempo.
+   */
+  const cuotas: any[] =
+    await tx.$queryRaw`
+      SELECT
+        id_cuota,
+        numero_cuota,
+        fecha_vencimiento,
+        monto_programado,
+
+        CASE
+          WHEN fecha_vencimiento < CURDATE()
+            THEN 1
+          ELSE 0
+        END AS vencida
+
+      FROM venta_cuotas
+
+      WHERE tipo_origen = 'APARTADO'
+        AND id_apartado = ${idApartado}
+
+      ORDER BY
+        numero_cuota,
+        id_cuota
+
+      FOR UPDATE
+    `;
+
+  if (cuotas.length === 0) {
+    throw new BadRequestException(
+      "El apartado no tiene cuotas programadas",
+    );
+  }
+
+  const totalProgramado =
+    redondear(
+      cuotas.reduce(
+        (acumulado, cuota) =>
+          acumulado +
+          Number(cuota.monto_programado),
+        0,
+      ),
+    );
+
+  if (
+    totalAplicable >
+    totalProgramado + 0.01
+  ) {
+    throw new BadRequestException(
+      "Los pagos superan el total programado de las cuotas",
+    );
+  }
+
+  const aplicaciones: AplicacionAbonoCuota[] =
+    [];
+
+  let acumuladoProgramado = 0;
+
+  for (const cuota of cuotas) {
+    const idCuota = Number(
+      cuota.id_cuota,
+    );
+
+    const numeroCuota = Number(
+      cuota.numero_cuota,
+    );
+
+    const montoProgramado = Number(
+      cuota.monto_programado,
+    );
+
+    /*
+     * Pago acumulado que tenía esta cuota antes
+     * de registrar el abono actual.
+     */
+    const pagadoAnterior = redondear(
+      Math.min(
+        montoProgramado,
+        Math.max(
+          totalAplicableAnterior -
+            acumuladoProgramado,
+          0,
+        ),
+      ),
+    );
+
+    /*
+     * Pago acumulado que debe tener después
+     * de registrar el abono actual.
+     */
+    const pagadoActual = redondear(
+      Math.min(
+        montoProgramado,
+        Math.max(
+          totalAplicable -
+            acumuladoProgramado,
+          0,
+        ),
+      ),
+    );
+
+    const montoAplicado = redondear(
+      Math.max(
+        pagadoActual - pagadoAnterior,
+        0,
+      ),
+    );
+
+    const saldoCuota = redondear(
+      Math.max(
+        montoProgramado - pagadoActual,
+        0,
+      ),
+    );
+
+    const estaVencida =
+      Number(cuota.vencida) === 1;
+
+    const idEstado =
+      saldoCuota <= 0
+        ? idEstadoPagada
+        : estaVencida
+          ? idEstadoAtrasada
+          : idEstadoPendiente;
+
+    await tx.$executeRaw`
+      UPDATE venta_cuotas
+      SET
+        monto_pagado = ${pagadoActual},
+        saldo = ${saldoCuota},
+        id_estado = ${idEstado},
+        updated_at = NOW()
+      WHERE id_cuota = ${idCuota}
+        AND tipo_origen = 'APARTADO'
+        AND id_apartado = ${idApartado}
+    `;
+
+    if (montoAplicado > 0) {
+      let estadoCalculado:
+        AplicacionAbonoCuota["estado"];
+
+      if (saldoCuota <= 0) {
+        estadoCalculado = "PAGADA";
+      } else if (pagadoActual > 0) {
+        estadoCalculado = "PARCIAL";
+      } else if (estaVencida) {
+        estadoCalculado = "VENCIDA";
+      } else {
+        estadoCalculado = "PENDIENTE";
+      }
+
+      aplicaciones.push({
+        id_cuota: idCuota,
+        numero_cuota: numeroCuota,
+        monto_aplicado: montoAplicado,
+        monto_pagado: pagadoActual,
+        saldo: saldoCuota,
+        estado: estadoCalculado,
+      });
+    }
+
+    acumuladoProgramado = redondear(
+      acumuladoProgramado +
+        montoProgramado,
+    );
+  }
+
+  /*
+   * Guardamos la relación exacta entre el pago y las
+   * cuotas afectadas. Esto permite reimprimir el recibo
+   * posteriormente sin perder el detalle del abono.
+   */
+  await tx.$executeRaw`
+    DELETE FROM cuota_pagos
+    WHERE id_pago = ${idPago}
+  `;
+
+  for (const aplicacion of aplicaciones) {
+    await tx.$executeRaw`
+      INSERT INTO cuota_pagos (
+        id_cuota,
+        id_pago,
+        monto,
+        fecha
+      ) VALUES (
+        ${aplicacion.id_cuota},
+        ${idPago},
+        ${aplicacion.monto_aplicado},
+        NOW()
+      )
+    `;
+  }
+
+  return aplicaciones;
+}
+
+
+
+
+    async registrarAbono(
+        idApartado: number,
+        data: RegistrarAbonoDto,
+        idUsuario: number,
+    ) {
+        this.validarId(
+            idApartado,
+            'Identificador de apartado inválido',
+        );
+
+        const tokenOperacion = this.normalizarToken(
+            data.token_operacion,
+        );
+
+        const idMetodoPago = Number(
+            data.id_metodo_pago,
+        );
+
         const monto = Number(data.monto);
-        this.validarId(idMetodoPago, 'Debes seleccionar un método de pago');
-        if (!Number.isFinite(monto) ||
-            monto <= 0) {
-            throw new BadRequestException('El monto del abono debe ser mayor que cero');
+
+        this.validarId(
+            idMetodoPago,
+            'Debes seleccionar un método de pago',
+        );
+
+        if (!Number.isFinite(monto) || monto <= 0) {
+            throw new BadRequestException(
+                'El monto del abono debe ser mayor que cero',
+            );
         }
-        const pagoExistente: any[] = await this.prisma.$queryRaw `
-        SELECT id_pago
-        FROM pagos
-        WHERE token_operacion =
-              ${tokenOperacion}
-        LIMIT 1
-      `;
+
+        const pagoExistente: any[] =
+            await this.prisma.$queryRaw`
+                SELECT
+                    id_pago,
+                    id_apartado
+                FROM pagos
+                WHERE token_operacion =
+                    ${tokenOperacion}
+                LIMIT 1
+            `;
+
         if (pagoExistente.length > 0) {
+            const idApartadoExistente = Number(
+                pagoExistente[0].id_apartado,
+            );
+
             return {
-                mensaje: 'El abono ya había sido registrado',
-                apartado: await this.obtener(idApartado, idUsuario),
-            };
-        }
-        const contexto = await this.obtenerContextoUsuario(idUsuario);
-        const turno = await this.obtenerTurnoActivo(idUsuario, contexto.id_sucursal);
-        try {
-            await this.prisma.$transaction(async (tx) => {
-                const apartados: any[] = await tx.$queryRaw `
-              SELECT
-                a.id_apartado,
-                a.codigo_apartado,
-                a.id_cliente,
-                a.total,
-                a.saldo_pendiente,
-                a.entregado,
-                es.codigo AS codigo_estado
-              FROM apartados a
-              INNER JOIN estados_sistema es
-                ON es.id_estado = a.id_estado
-              WHERE a.id_apartado =
-                    ${idApartado}
-                AND a.id_sucursal =
-                    ${contexto.id_sucursal}
-              LIMIT 1
-              FOR UPDATE
-            `;
-                if (apartados.length === 0) {
-                    throw new NotFoundException('Apartado no encontrado');
-                }
-                const apartado = apartados[0];
-                if (apartado.codigo_estado !== 'ACTIVO') {
-                    throw new BadRequestException('Solo se puede abonar a un apartado activo');
-                }
-                const saldo = Number(apartado.saldo_pendiente);
-                if (monto > saldo) {
-                    throw new BadRequestException(`El abono no puede superar el saldo pendiente de Q${saldo.toFixed(2)}`);
-                }
-                const metodo: any[] = await tx.$queryRaw `
-              SELECT requiere_referencia
-              FROM metodos_pago
-              WHERE id_metodo_pago =
-                    ${idMetodoPago}
-                AND estado = 1
-              LIMIT 1
-            `;
-                if (metodo.length === 0) {
-                    throw new BadRequestException('El método de pago no existe o está inactivo');
-                }
-                if (Number(metodo[0].requiere_referencia) === 1 &&
-                    !data.referencia?.trim()) {
-                    throw new BadRequestException('El método de pago requiere referencia');
-                }
-                const tipoCaja: any[] = await tx.$queryRaw `
-              SELECT id_tipo_movimiento_caja
-              FROM tipos_movimiento_caja
-              WHERE codigo = 'ABONO'
-                AND afecta_caja = 1
-                AND estado = 1
-              LIMIT 1
-            `;
-                if (tipoCaja.length === 0) {
-                    throw new BadRequestException('No existe el movimiento de caja ABONO');
-                }
-                const nuevoSaldo = Number((saldo - monto).toFixed(2));
-                await tx.$executeRaw `
-            INSERT INTO pagos (
-              token_operacion,
-              id_venta,
-              id_apartado,
-              id_turno,
-              id_metodo_pago,
-              monto,
-              referencia,
-              fecha
-            ) VALUES (
-              ${tokenOperacion},
-              NULL,
-              ${idApartado},
-              ${turno.id_turno},
-              ${idMetodoPago},
-              ${monto},
-              ${data.referencia?.trim() ||
-                    apartado.codigo_apartado},
-              NOW()
-            )
-          `;
-                const resultadoPago: any[] = await tx.$queryRaw `
-              SELECT LAST_INSERT_ID()
-                     AS id_pago
-            `;
-                const idPago = Number(resultadoPago[0]?.id_pago);
-                await tx.$executeRaw `
-            UPDATE apartados
-            SET saldo_pendiente =
-                ${nuevoSaldo}
-            WHERE id_apartado =
-                  ${idApartado}
-          `;
-                await tx.$executeRaw `
-            INSERT INTO caja_movimientos (
-              id_turno,
-              id_tipo_movimiento_caja,
-              id_metodo_pago,
-              monto,
-              referencia,
-              descripcion,
-              fecha
-            ) VALUES (
-              ${turno.id_turno},
-              ${Number(tipoCaja[0]
-                    .id_tipo_movimiento_caja)},
-              ${idMetodoPago},
-              ${monto},
-              ${apartado.codigo_apartado},
-              'Abono de ApartadoYA',
-              NOW()
-            )
-          `;
-                await tx.$executeRaw `
-            UPDATE caja_turnos
-            SET monto_esperado =
-                monto_esperado + ${monto}
-            WHERE id_turno =
-                  ${turno.id_turno}
-              AND fecha_cierre IS NULL
-          `;
-                await this.generarDocumentoAbonoTx(tx, {
-                    idPago,
-                    idApartado,
-                    codigoApartado: apartado.codigo_apartado,
-                    idCliente: Number(apartado.id_cliente),
+                mensaje:
+                    'El abono ya había sido registrado',
+                aplicaciones: [],
+                apartado: await this.obtener(
+                    idApartadoExistente,
                     idUsuario,
-                    idSucursal: contexto.id_sucursal,
-                    idMetodoPago,
-                    monto,
-                    nuevoSaldo,
-                });
-            }, {
-                isolationLevel: Prisma.TransactionIsolationLevel
-                    .Serializable,
-                timeout: 30000,
-            });
-            return {
-                mensaje: 'Abono registrado correctamente',
-                apartado: await this.obtener(idApartado, idUsuario),
+                ),
             };
         }
-        catch (error: unknown) {
-            const pago: any[] = await this.prisma.$queryRaw `
-          SELECT id_pago
-          FROM pagos
-          WHERE token_operacion =
-                ${tokenOperacion}
-          LIMIT 1
-        `;
+
+        const contexto =
+            await this.obtenerContextoUsuario(idUsuario);
+
+        const turno =
+            await this.obtenerTurnoActivo(
+                idUsuario,
+                contexto.id_sucursal,
+            );
+
+        let aplicaciones:
+            AplicacionAbonoCuota[] = [];
+
+        let idPagoRegistrado = 0;
+
+        try {
+            await this.prisma.$transaction(
+                async (tx) => {
+                    const apartados: any[] =
+                        await tx.$queryRaw`
+                            SELECT
+                                a.id_apartado,
+                                a.codigo_apartado,
+                                a.id_cliente,
+                                a.total,
+                                a.enganche,
+                                a.saldo_pendiente,
+                                a.entregado,
+                                es.codigo AS codigo_estado
+
+                            FROM apartados a
+
+                            INNER JOIN estados_sistema es
+                                ON es.id_estado =
+                                   a.id_estado
+
+                            WHERE a.id_apartado =
+                                  ${idApartado}
+                              AND a.id_sucursal =
+                                  ${contexto.id_sucursal}
+
+                            LIMIT 1
+                            FOR UPDATE
+                        `;
+
+                    if (apartados.length === 0) {
+                        throw new NotFoundException(
+                            'Apartado no encontrado',
+                        );
+                    }
+
+                    const apartado = apartados[0];
+
+                    if (
+                        apartado.codigo_estado !==
+                        'ACTIVO'
+                    ) {
+                        throw new BadRequestException(
+                            'Solo se puede abonar a un apartado activo',
+                        );
+                    }
+
+                    if (
+                        Number(apartado.entregado) === 1
+                    ) {
+                        throw new BadRequestException(
+                            'No se puede registrar el abono porque los productos ya fueron entregados',
+                        );
+                    }
+
+                    const saldo = Number(
+                        apartado.saldo_pendiente,
+                    );
+
+                    if (monto > saldo) {
+                        throw new BadRequestException(
+                            `El abono no puede superar el saldo pendiente de Q${saldo.toFixed(
+                                2,
+                            )}`,
+                        );
+                    }
+
+                    const metodo: any[] =
+                        await tx.$queryRaw`
+                            SELECT
+                                requiere_referencia
+                            FROM metodos_pago
+                            WHERE id_metodo_pago =
+                                  ${idMetodoPago}
+                              AND estado = 1
+                            LIMIT 1
+                        `;
+
+                    if (metodo.length === 0) {
+                        throw new BadRequestException(
+                            'El método de pago no existe o está inactivo',
+                        );
+                    }
+
+                    if (
+                        Number(
+                            metodo[0]
+                                .requiere_referencia,
+                        ) === 1 &&
+                        !data.referencia?.trim()
+                    ) {
+                        throw new BadRequestException(
+                            'El método de pago requiere referencia',
+                        );
+                    }
+
+                    const tipoCaja: any[] =
+                        await tx.$queryRaw`
+                            SELECT
+                                id_tipo_movimiento_caja
+                            FROM tipos_movimiento_caja
+                            WHERE codigo = 'ABONO'
+                              AND afecta_caja = 1
+                              AND estado = 1
+                            LIMIT 1
+                        `;
+
+                    if (tipoCaja.length === 0) {
+                        throw new BadRequestException(
+                            'No existe el movimiento de caja ABONO',
+                        );
+                    }
+
+                    const nuevoSaldo = Number(
+                        (saldo - monto).toFixed(2),
+                    );
+
+                    await tx.$executeRaw`
+                        INSERT INTO pagos (
+                            token_operacion,
+                            id_venta,
+                            id_apartado,
+                            id_turno,
+                            id_metodo_pago,
+                            monto,
+                            referencia,
+                            fecha
+                        ) VALUES (
+                            ${tokenOperacion},
+                            NULL,
+                            ${idApartado},
+                            ${turno.id_turno},
+                            ${idMetodoPago},
+                            ${monto},
+                            ${
+                                data.referencia?.trim() ||
+                                apartado.codigo_apartado
+                            },
+                            NOW()
+                        )
+                    `;
+
+                    const resultadoPago: any[] =
+                        await tx.$queryRaw`
+                            SELECT
+                                LAST_INSERT_ID()
+                                    AS id_pago
+                        `;
+
+                    idPagoRegistrado = Number(
+                        resultadoPago[0]?.id_pago,
+                    );
+
+                    if (
+                        !Number.isInteger(
+                            idPagoRegistrado,
+                        ) ||
+                        idPagoRegistrado <= 0
+                    ) {
+                        throw new BadRequestException(
+                            'No fue posible registrar el pago',
+                        );
+                    }
+
+                    /*
+                     * Distribuye el dinero entre las cuotas
+                     * en orden, sin bloquear pagos anticipados.
+                     */
+                    aplicaciones =
+                        await this
+                            .sincronizarCuotasApartadoTx(
+                                tx,
+                                idApartado,
+                                idPagoRegistrado,
+                                monto,
+                            );
+
+                    await tx.$executeRaw`
+                        UPDATE apartados
+                        SET saldo_pendiente =
+                            ${nuevoSaldo}
+                        WHERE id_apartado =
+                            ${idApartado}
+                    `;
+
+                    await tx.$executeRaw`
+                        INSERT INTO caja_movimientos (
+                            id_turno,
+                            id_tipo_movimiento_caja,
+                            id_metodo_pago,
+                            monto,
+                            referencia,
+                            descripcion,
+                            fecha
+                        ) VALUES (
+                            ${turno.id_turno},
+                            ${Number(
+                                tipoCaja[0]
+                                    .id_tipo_movimiento_caja,
+                            )},
+                            ${idMetodoPago},
+                            ${monto},
+                            ${apartado.codigo_apartado},
+                            'Abono de ApartadoYA',
+                            NOW()
+                        )
+                    `;
+
+                    await tx.$executeRaw`
+                        UPDATE caja_turnos
+                        SET monto_esperado =
+                            monto_esperado + ${monto}
+                        WHERE id_turno =
+                            ${turno.id_turno}
+                          AND fecha_cierre IS NULL
+                    `;
+
+                    await this.generarDocumentoAbonoTx(
+                        tx,
+                        {
+                            idPago:
+                                idPagoRegistrado,
+                            idApartado,
+                            codigoApartado:
+                                apartado.codigo_apartado,
+                            idCliente: Number(
+                                apartado.id_cliente,
+                            ),
+                            idUsuario,
+                            idSucursal:
+                                contexto.id_sucursal,
+                            idMetodoPago,
+                            monto,
+                            nuevoSaldo,
+                            aplicaciones,
+                        },
+                    );
+                },
+                {
+                    isolationLevel:
+                        Prisma
+                            .TransactionIsolationLevel
+                            .Serializable,
+                    timeout: 30000,
+                },
+            );
+
+            return {
+                mensaje:
+                    'Abono registrado correctamente',
+                id_pago: idPagoRegistrado,
+                aplicaciones,
+                apartado: await this.obtener(
+                    idApartado,
+                    idUsuario,
+                ),
+            };
+        } catch (error: unknown) {
+            const pago: any[] =
+                await this.prisma.$queryRaw`
+                    SELECT
+                        id_pago,
+                        id_apartado
+                    FROM pagos
+                    WHERE token_operacion =
+                        ${tokenOperacion}
+                    LIMIT 1
+                `;
+
             if (pago.length > 0) {
                 return {
-                    mensaje: 'El abono ya había sido registrado',
-                    apartado: await this.obtener(idApartado, idUsuario),
+                    mensaje:
+                        'El abono ya había sido registrado',
+                    id_pago: Number(
+                        pago[0].id_pago,
+                    ),
+                    aplicaciones: [],
+                    apartado: await this.obtener(
+                        Number(
+                            pago[0].id_apartado,
+                        ),
+                        idUsuario,
+                    ),
                 };
             }
+
             this.manejarError(error);
         }
     }
+
+
     async entregar(idApartado: number, idUsuario: number) {
         this.validarId(idApartado, 'Identificador de apartado inválido');
         const contexto = await this.obtenerContextoUsuario(idUsuario);
@@ -1372,8 +2076,7 @@ export class ApartadosService {
           SET
             entregado = 1,
             fecha_entrega = NOW(),
-            id_usuario_entrega =
-              ${idUsuario}
+            id_usuario_entrega =              ${idUsuario}
           WHERE id_apartado = ${idApartado}
         `;
             /*
@@ -2000,110 +2703,323 @@ export class ApartadosService {
       `;
         }
     }
-    private async generarDocumentoAbonoTx(tx: Prisma.TransactionClient, data: {
-        idPago: number;
-        idApartado: number;
-        codigoApartado: string;
-        idCliente: number;
-        idUsuario: number;
-        idSucursal: number;
-        idMetodoPago: number;
-        monto: number;
-        nuevoSaldo: number;
-    }) {
-        const tipo: any[] = await tx.$queryRaw `
-      SELECT
-        id_tipo_documento,
-        prefijo
-      FROM tipos_documento
-      WHERE codigo =
-            'COMPROBANTE_ABONO'
-        AND estado = 1
-      LIMIT 1
-    `;
-        const estado: any[] = await tx.$queryRaw `
-      SELECT id_estado
-      FROM estados_sistema
-      WHERE modulo = 'DOCUMENTO'
-        AND codigo = 'EMITIDO'
-        AND estado = 1
-      LIMIT 1
-    `;
-        if (tipo.length === 0 ||
-            estado.length === 0) {
-            throw new BadRequestException('No existe la configuración del comprobante de abono');
+    private async generarDocumentoAbonoTx(
+        tx: Prisma.TransactionClient,
+        data: {
+            idPago: number;
+            idApartado: number;
+            codigoApartado: string;
+            idCliente: number;
+            idUsuario: number;
+            idSucursal: number;
+            idMetodoPago: number;
+            monto: number;
+            nuevoSaldo: number;
+            aplicaciones:
+                AplicacionAbonoCuota[];
+        },
+    ) {
+        const tipo: any[] =
+            await tx.$queryRaw`
+                SELECT
+                    id_tipo_documento,
+                    prefijo
+                FROM tipos_documento
+                WHERE codigo =
+                      'COMPROBANTE_ABONO'
+                  AND estado = 1
+                LIMIT 1
+            `;
+
+        const estado: any[] =
+            await tx.$queryRaw`
+                SELECT
+                    id_estado
+                FROM estados_sistema
+                WHERE modulo = 'DOCUMENTO'
+                  AND codigo = 'EMITIDO'
+                  AND estado = 1
+                LIMIT 1
+            `;
+
+        if (
+            tipo.length === 0 ||
+            estado.length === 0
+        ) {
+            throw new BadRequestException(
+                'No existe la configuración del comprobante de abono',
+            );
         }
-        const idTipo = Number(tipo[0].id_tipo_documento);
-        const codigoDocumento = await this.siguienteDocumentoTx(tx, data.idSucursal, idTipo, tipo[0].prefijo || 'ABN');
-        await tx.$executeRaw `
-      INSERT INTO documentos (
-        codigo_documento,
-        id_tipo_documento,
-        origen,
-        id_origen,
-        id_cliente,
-        id_usuario,
-        id_sucursal,
-        id_estado,
-        fecha,
-        subtotal,
-        descuento,
-        total,
-        observaciones
-      ) VALUES (
-        ${codigoDocumento},
-        ${idTipo},
-        'PAGO',
-        ${data.idPago},
-        ${data.idCliente},
-        ${data.idUsuario},
-        ${data.idSucursal},
-        ${Number(estado[0].id_estado)},
-        NOW(),
-        ${data.monto},
-        0,
-        ${data.monto},
-        ${`Abono al apartado ${data.codigoApartado}. Saldo restante Q${data.nuevoSaldo.toFixed(2)}`}
-      )
-    `;
-        const resultado: any[] = await tx.$queryRaw `
-        SELECT LAST_INSERT_ID()
-               AS id_documento
-      `;
-        const idDocumento = Number(resultado[0]?.id_documento);
-        await tx.$executeRaw `
-      INSERT INTO documento_detalle (
-        id_documento,
-        codigo_item,
-        descripcion,
-        cantidad,
-        precio_unitario,
-        descuento,
-        subtotal
-      ) VALUES (
-        ${idDocumento},
-        ${data.codigoApartado},
-        'Abono de ApartadoYA',
-        1,
-        ${data.monto},
-        0,
-        ${data.monto}
-      )
-    `;
-        await tx.$executeRaw `
-      INSERT INTO documento_pagos (
-        id_documento,
-        id_metodo_pago,
-        monto,
-        referencia
-      ) VALUES (
-        ${idDocumento},
-        ${data.idMetodoPago},
-        ${data.monto},
-        ${data.codigoApartado}
-      )
-    `;
+
+        const resumenApartado: any[] =
+            await tx.$queryRaw`
+                SELECT
+                    a.cantidad_cuotas,
+                    a.enganche,
+                    a.token_operacion,
+                    COALESCE(
+                        SUM(
+                            CASE
+                                WHEN vc.saldo <= 0
+                                    THEN 1
+                                ELSE 0
+                            END
+                        ),
+                        0
+                    ) AS cuotas_pagadas
+
+                FROM apartados a
+
+                LEFT JOIN venta_cuotas vc
+                    ON vc.id_apartado =
+                       a.id_apartado
+                   AND vc.tipo_origen =
+                       'APARTADO'
+
+                WHERE a.id_apartado =
+                      ${data.idApartado}
+
+                GROUP BY
+                    a.id_apartado,
+                    a.cantidad_cuotas,
+                    a.enganche,
+                    a.token_operacion
+            `;
+
+        const productos: any[] =
+            await tx.$queryRaw`
+                SELECT
+                    p.codigo_producto,
+                    p.nombre AS producto,
+                    pv.codigo_variante,
+                    ad.cantidad
+
+                FROM apartado_detalle ad
+
+                INNER JOIN producto_variantes pv
+                    ON pv.id_variante =
+                       ad.id_variante
+
+                INNER JOIN productos p
+                    ON p.id_producto =
+                       pv.id_producto
+
+                WHERE ad.id_apartado =
+                      ${data.idApartado}
+
+                ORDER BY
+                    ad.id_apartado_detalle
+            `;
+
+        const numeroAbonoResultado: any[] =
+            await tx.$queryRaw`
+                SELECT
+                    COUNT(*) AS numero_abono
+
+                FROM pagos pg
+
+                INNER JOIN apartados a
+                    ON a.id_apartado =
+                       pg.id_apartado
+
+                WHERE pg.id_apartado =
+                      ${data.idApartado}
+                  AND pg.id_pago <=
+                      ${data.idPago}
+                  AND NOT (
+                      a.enganche > 0
+                      AND pg.token_operacion =
+                          a.token_operacion
+                  )
+            `;
+
+        const cantidadCuotas = Number(
+            resumenApartado[0]
+                ?.cantidad_cuotas ?? 0,
+        );
+
+        const cuotasPagadas = Number(
+            resumenApartado[0]
+                ?.cuotas_pagadas ?? 0,
+        );
+
+        const numeroAbono = Number(
+            numeroAbonoResultado[0]
+                ?.numero_abono ?? 1,
+        );
+
+        const resumenProductos =
+            productos.length > 0
+                ? productos
+                    .map(
+                        (producto) =>
+                            `${Number(
+                                producto.cantidad,
+                            )} x ${producto.producto} (${producto.codigo_variante || producto.codigo_producto})`,
+                    )
+                    .join(', ')
+                : 'Productos del apartado';
+
+        const detalleAplicacion =
+            data.aplicaciones.length > 0
+                ? data.aplicaciones
+                    .map(
+                        (aplicacion) =>
+                            `Cuota ${aplicacion.numero_cuota}/${cantidadCuotas}: Q${aplicacion.monto_aplicado.toFixed(
+                                2,
+                            )} - ${aplicacion.estado}`,
+                    )
+                    .join(' | ')
+                : 'Abono sin aplicación de cuotas';
+
+        const observaciones = [
+            `Abono número ${numeroAbono} del apartado ${data.codigoApartado}.`,
+            `Productos: ${resumenProductos}.`,
+            `Aplicación: ${detalleAplicacion}.`,
+            `Cuotas pagadas: ${cuotasPagadas}/${cantidadCuotas}.`,
+            `Saldo restante: Q${data.nuevoSaldo.toFixed(2)}.`,
+        ]
+            .join(' ')
+            .slice(0, 255);
+
+        const idTipo = Number(
+            tipo[0].id_tipo_documento,
+        );
+
+        const codigoDocumento =
+            await this.siguienteDocumentoTx(
+                tx,
+                data.idSucursal,
+                idTipo,
+                tipo[0].prefijo || 'ABN',
+            );
+
+        await tx.$executeRaw`
+            INSERT INTO documentos (
+                codigo_documento,
+                id_tipo_documento,
+                origen,
+                id_origen,
+                id_cliente,
+                id_usuario,
+                id_sucursal,
+                id_estado,
+                fecha,
+                subtotal,
+                descuento,
+                total,
+                observaciones
+            ) VALUES (
+                ${codigoDocumento},
+                ${idTipo},
+                'PAGO',
+                ${data.idPago},
+                ${data.idCliente},
+                ${data.idUsuario},
+                ${data.idSucursal},
+                ${Number(
+                    estado[0].id_estado,
+                )},
+                NOW(),
+                ${data.monto},
+                0,
+                ${data.monto},
+                ${observaciones}
+            )
+        `;
+
+        const resultado: any[] =
+            await tx.$queryRaw`
+                SELECT
+                    LAST_INSERT_ID()
+                        AS id_documento
+            `;
+
+        const idDocumento = Number(
+            resultado[0]?.id_documento,
+        );
+
+        if (
+            !Number.isInteger(idDocumento) ||
+            idDocumento <= 0
+        ) {
+            throw new BadRequestException(
+                'No fue posible generar el comprobante del abono',
+            );
+        }
+
+        if (data.aplicaciones.length === 0) {
+            await tx.$executeRaw`
+                INSERT INTO documento_detalle (
+                    id_documento,
+                    codigo_item,
+                    descripcion,
+                    cantidad,
+                    precio_unitario,
+                    descuento,
+                    subtotal
+                ) VALUES (
+                    ${idDocumento},
+                    ${data.codigoApartado},
+                    ${`Abono número ${numeroAbono} - ${resumenProductos}`},
+                    1,
+                    ${data.monto},
+                    0,
+                    ${data.monto}
+                )
+            `;
+        } else {
+            for (
+                const aplicacion of
+                data.aplicaciones
+            ) {
+                const descripcion =
+                    [
+                        `Abono número ${numeroAbono}`,
+                        `Cuota ${aplicacion.numero_cuota}/${cantidadCuotas}`,
+                        aplicacion.estado,
+                        resumenProductos,
+                    ]
+                        .join(' - ')
+                        .slice(0, 255);
+
+                await tx.$executeRaw`
+                    INSERT INTO documento_detalle (
+                        id_documento,
+                        codigo_item,
+                        descripcion,
+                        cantidad,
+                        precio_unitario,
+                        descuento,
+                        subtotal
+                    ) VALUES (
+                        ${idDocumento},
+                        ${`CUOTA-${aplicacion.numero_cuota}`},
+                        ${descripcion},
+                        1,
+                        ${aplicacion.monto_aplicado},
+                        0,
+                        ${aplicacion.monto_aplicado}
+                    )
+                `;
+            }
+        }
+
+        await tx.$executeRaw`
+            INSERT INTO documento_pagos (
+                id_documento,
+                id_metodo_pago,
+                monto,
+                referencia
+            ) VALUES (
+                ${idDocumento},
+                ${data.idMetodoPago},
+                ${data.monto},
+                ${data.codigoApartado}
+            )
+        `;
     }
+
     private async siguienteDocumentoTx(tx: Prisma.TransactionClient, idSucursal: number, idTipoDocumento: number, prefijo: string) {
         await tx.$executeRaw `
       INSERT IGNORE INTO secuencias_documentos (
@@ -2195,4 +3111,4 @@ export class ApartadosService {
         console.error('Error técnico de ApartadoYA:', error);
         throw new BadRequestException('No fue posible completar la operación de ApartadoYA');
     }
-}
+  }
