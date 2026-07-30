@@ -1,4 +1,5 @@
 import {
+  type FormEvent,
   useEffect,
   useMemo,
   useState,
@@ -29,7 +30,9 @@ type Cliente = {
   codigo_cliente: string;
   cliente: string;
   nit: string | null;
+  dpi: string | null;
   telefono: string | null;
+  direccion: string | null;
   tipo_cliente: string;
   porcentaje_descuento: number;
 };
@@ -87,7 +90,10 @@ type Catalogos = {
     caja: string;
   } | null;
 
-  clientes: Cliente[];
+  /*
+   * Los clientes ya no se cargan aquí.
+   * Se buscan bajo demanda por DPI, NIT o código.
+   */
   productos: Producto[];
   metodos_pago: MetodoPago[];
 
@@ -113,6 +119,27 @@ type ResumenVentaExitosa = {
   monto_recibido: number;
 };
 
+const obtenerMensajeError = (
+  error: any,
+  predeterminado: string,
+) => {
+  const mensaje = error?.response?.data?.message;
+
+  if (Array.isArray(mensaje)) {
+    return mensaje.join("\n");
+  }
+
+  if (typeof mensaje === "string") {
+    return mensaje;
+  }
+
+  if (typeof error?.message === "string") {
+    return error.message;
+  }
+
+  return predeterminado;
+};
+
 export default function Ventas() {
   const navigate = useNavigate();
 
@@ -125,8 +152,31 @@ export default function Ventas() {
   const [carrito, setCarrito] =
     useState<CarritoItem[]>([]);
 
-  const [idCliente, setIdCliente] =
-    useState(0);
+  /*
+   * El cliente ya no se selecciona desde una lista completa.
+   * Se busca por DPI, NIT o código y se guarda el resultado
+   * seleccionado en este estado.
+   */
+  const [
+    clienteSeleccionado,
+    setClienteSeleccionado,
+  ] = useState<Cliente | null>(null);
+
+  const [busquedaCliente, setBusquedaCliente] =
+    useState("");
+
+  const [
+    resultadosClientes,
+    setResultadosClientes,
+  ] = useState<Cliente[]>([]);
+
+  const [buscandoCliente, setBuscandoCliente] =
+    useState(false);
+
+  const [
+    busquedaClienteRealizada,
+    setBusquedaClienteRealizada,
+  ] = useState(false);
 
   const [idMetodoPago, setIdMetodoPago] =
     useState(0);
@@ -153,6 +203,21 @@ export default function Ventas() {
     useState<number | null>(null);
 
   /*
+   * El historial ya no se consulta al abrir la pantalla.
+   * Solo se carga cuando el usuario presiona el botón.
+   */
+  const [
+    mostrarVentasRecientes,
+    setMostrarVentasRecientes,
+  ] = useState(false);
+
+  const [ventasCargadas, setVentasCargadas] =
+    useState(false);
+
+  const [cargandoVentas, setCargandoVentas] =
+    useState(false);
+
+  /*
    * Datos del comprobante generado después
    * de registrar correctamente una venta.
    */
@@ -170,6 +235,9 @@ export default function Ventas() {
   const [tokenOperacion, setTokenOperacion] =
     useState<string>(() => crypto.randomUUID());
 
+  const idCliente =
+    clienteSeleccionado?.id_cliente || 0;
+
   const cargarCatalogos = async () => {
     const respuesta =
       await api.get<Catalogos>("/ventas/catalogos");
@@ -177,21 +245,6 @@ export default function Ventas() {
     const datos = respuesta.data;
 
     setCatalogos(datos);
-
-    setIdCliente((actual) => {
-      const existe = datos.clientes.some(
-        (cliente) =>
-          cliente.id_cliente === actual,
-      );
-
-      if (existe) {
-        return actual;
-      }
-
-      return datos.clientes.length > 0
-        ? datos.clientes[0].id_cliente
-        : 0;
-    });
 
     setIdMetodoPago((actual) => {
       const existe = datos.metodos_pago.some(
@@ -210,24 +263,34 @@ export default function Ventas() {
   };
 
   const cargarVentas = async () => {
-    const respuesta =
-      await api.get<VentaListado[]>("/ventas");
+    try {
+      setCargandoVentas(true);
 
-    setVentas(
-      Array.isArray(respuesta.data)
-        ? respuesta.data
-        : [],
-    );
+      const respuesta =
+        await api.get<VentaListado[]>("/ventas");
+
+      setVentas(
+        Array.isArray(respuesta.data)
+          ? respuesta.data
+          : [],
+      );
+
+      setVentasCargadas(true);
+    } finally {
+      setCargandoVentas(false);
+    }
   };
 
   const cargarDatos = async () => {
     try {
       setCargando(true);
 
-      await Promise.all([
-        cargarCatalogos(),
-        cargarVentas(),
-      ]);
+      /*
+       * Ya no se llama cargarVentas() aquí.
+       * Esto evita cargar el historial completo
+       * cada vez que se abre el módulo.
+       */
+      await cargarCatalogos();
     } catch (error: any) {
       console.error(
         "Error al cargar ventas:",
@@ -235,8 +298,10 @@ export default function Ventas() {
       );
 
       alert(
-        error.response?.data?.message ||
+        obtenerMensajeError(
+          error,
           "Error al cargar el módulo de ventas",
+        ),
       );
     } finally {
       setCargando(false);
@@ -247,14 +312,136 @@ export default function Ventas() {
     cargarDatos();
   }, []);
 
-  const clienteSeleccionado = useMemo(
-    () =>
-      catalogos?.clientes.find(
-        (cliente) =>
-          cliente.id_cliente === idCliente,
-      ) || null,
-    [catalogos, idCliente],
-  );
+  const buscarCliente = async (
+    event?: FormEvent<HTMLFormElement>,
+  ) => {
+    event?.preventDefault();
+
+    if (guardando || buscandoCliente) {
+      return;
+    }
+
+    const valor = busquedaCliente.trim();
+
+    if (valor.length < 3) {
+      alert(
+        "Ingrese al menos 3 caracteres del DPI, NIT o código del cliente",
+      );
+      return;
+    }
+
+    try {
+      setBuscandoCliente(true);
+      setBusquedaClienteRealizada(false);
+      setResultadosClientes([]);
+
+      const respuesta = await api.get<Cliente[]>(
+        "/ventas/clientes/buscar",
+        {
+          params: {
+            valor,
+          },
+        },
+      );
+
+      const clientes = Array.isArray(
+        respuesta.data,
+      )
+        ? respuesta.data
+        : [];
+
+      setResultadosClientes(clientes);
+      setBusquedaClienteRealizada(true);
+
+      if (clientes.length === 1) {
+        setClienteSeleccionado(clientes[0]);
+        setResultadosClientes([]);
+      }
+    } catch (error: any) {
+      console.error(
+        "Error al buscar cliente:",
+        error,
+      );
+
+      alert(
+        obtenerMensajeError(
+          error,
+          "No fue posible buscar el cliente",
+        ),
+      );
+    } finally {
+      setBuscandoCliente(false);
+    }
+  };
+
+  const seleccionarCliente = (
+    cliente: Cliente,
+  ) => {
+    setClienteSeleccionado(cliente);
+    setBusquedaCliente(
+      cliente.dpi ||
+        cliente.nit ||
+        cliente.codigo_cliente,
+    );
+    setResultadosClientes([]);
+    setBusquedaClienteRealizada(false);
+  };
+
+  const limpiarCliente = () => {
+    if (guardando) {
+      return;
+    }
+
+    setClienteSeleccionado(null);
+    setBusquedaCliente("");
+    setResultadosClientes([]);
+    setBusquedaClienteRealizada(false);
+  };
+
+  const alternarVentasRecientes = async () => {
+    if (mostrarVentasRecientes) {
+      setMostrarVentasRecientes(false);
+      return;
+    }
+
+    try {
+      if (!ventasCargadas) {
+        await cargarVentas();
+      }
+
+      setMostrarVentasRecientes(true);
+    } catch (error: any) {
+      console.error(
+        "Error al cargar ventas recientes:",
+        error,
+      );
+
+      alert(
+        obtenerMensajeError(
+          error,
+          "No fue posible cargar las ventas recientes",
+        ),
+      );
+    }
+  };
+
+  const actualizarVentasRecientes = async () => {
+    try {
+      await cargarVentas();
+    } catch (error: any) {
+      console.error(
+        "Error al actualizar ventas recientes:",
+        error,
+      );
+
+      alert(
+        obtenerMensajeError(
+          error,
+          "No fue posible actualizar las ventas recientes",
+        ),
+      );
+    }
+  };
 
   const productosFiltrados = useMemo(() => {
     const productos =
@@ -473,6 +660,15 @@ export default function Ventas() {
     setIdVariante(0);
     setCantidad(1);
     setBusquedaProducto("");
+
+    /*
+     * Se limpia el cliente para evitar registrar
+     * accidentalmente la siguiente venta a la misma persona.
+     */
+    setClienteSeleccionado(null);
+    setBusquedaCliente("");
+    setResultadosClientes([]);
+    setBusquedaClienteRealizada(false);
   };
 
   const obtenerReciboVenta = async (
@@ -502,7 +698,9 @@ export default function Ventas() {
     }
 
     if (idCliente <= 0) {
-      alert("Seleccione un cliente");
+      alert(
+        "Busque y seleccione un cliente por DPI o NIT",
+      );
       return;
     }
 
@@ -554,9 +752,15 @@ export default function Ventas() {
     }
 
     const confirmar = window.confirm(
-      `¿Registrar la venta por Q${total.toFixed(
-        2,
-      )}?`,
+      [
+        `¿Registrar la venta por Q${total.toFixed(
+          2,
+        )}?`,
+        "",
+        `Cliente: ${clienteSeleccionado?.cliente}`,
+        `DPI: ${clienteSeleccionado?.dpi || "-"}`,
+        `NIT: ${clienteSeleccionado?.nit || "C/F"}`,
+      ].join("\n"),
     );
 
     if (!confirmar) {
@@ -634,10 +838,16 @@ export default function Ventas() {
         );
       }
 
-      await Promise.all([
-        cargarCatalogos(),
-        cargarVentas(),
-      ]);
+      /*
+       * Se actualiza el inventario.
+       * El historial solo se vuelve a consultar si el usuario
+       * ya lo había abierto anteriormente.
+       */
+      await cargarCatalogos();
+
+      if (ventasCargadas) {
+        await cargarVentas();
+      }
     } catch (error: any) {
       console.error(
         "Error al registrar venta:",
@@ -649,9 +859,10 @@ export default function Ventas() {
        * no fue confirmada por el backend.
        */
       alert(
-        error.response?.data?.message ||
-          error.message ||
+        obtenerMensajeError(
+          error,
           "Error al registrar la venta",
+        ),
       );
     } finally {
       setGuardando(false);
@@ -683,8 +894,10 @@ export default function Ventas() {
       );
 
       alert(
-        error.response?.data?.message ||
+        obtenerMensajeError(
+          error,
           "No fue posible abrir el recibo",
+        ),
       );
     } finally {
       setAbriendoRecibo(null);
@@ -788,54 +1001,211 @@ export default function Ventas() {
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
         <div className="xl:col-span-2">
           <Card className="mb-6">
-            <h2 className="mb-4 text-xl font-bold">
+            <h2 className="mb-1 text-xl font-bold">
               Nueva venta
             </h2>
 
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <Select
-                label="Cliente"
-                value={idCliente}
-                disabled={guardando}
-                onChange={(e) =>
-                  setIdCliente(
-                    Number(e.target.value),
-                  )
+            <p className="mb-4 text-sm text-slate-500">
+              Busca al cliente por DPI, NIT o código
+              antes de registrar la venta.
+            </p>
+
+            <form
+              onSubmit={buscarCliente}
+              className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_auto]"
+            >
+              <Input
+                label="DPI, NIT o código del cliente"
+                value={busquedaCliente}
+                disabled={
+                  guardando ||
+                  buscandoCliente
                 }
-              >
-                <option value={0}>
-                  Seleccione cliente
-                </option>
+                onChange={(e) => {
+                  setBusquedaCliente(
+                    e.target.value,
+                  );
 
-                {catalogos?.clientes.map(
-                  (cliente) => (
-                    <option
-                      key={cliente.id_cliente}
-                      value={cliente.id_cliente}
-                    >
-                      {cliente.codigo_cliente} -{" "}
-                      {cliente.cliente}
-                    </option>
-                  ),
-                )}
-              </Select>
+                  if (clienteSeleccionado) {
+                    setClienteSeleccionado(null);
+                  }
 
-              <div className="rounded-xl bg-slate-50 p-4">
-                <p className="text-sm text-slate-500">
-                  Tipo de cliente
-                </p>
+                  setResultadosClientes([]);
+                  setBusquedaClienteRealizada(false);
+                }}
+                placeholder="Ejemplo: 281539065 o 1234567890101"
+              />
 
-                <p className="font-bold">
-                  {clienteSeleccionado?.tipo_cliente ||
-                    "-"}
-                </p>
-
-                <p className="text-sm text-blue-600">
-                  Descuento:{" "}
-                  {porcentajeDescuento}%
-                </p>
+              <div className="flex items-end">
+                <BotonPrimario
+                  type="submit"
+                  className="w-full md:w-auto"
+                  disabled={
+                    guardando ||
+                    buscandoCliente ||
+                    busquedaCliente.trim().length < 3
+                  }
+                >
+                  {buscandoCliente
+                    ? "Buscando..."
+                    : "Buscar cliente"}
+                </BotonPrimario>
               </div>
-            </div>
+            </form>
+
+            {resultadosClientes.length > 0 && (
+              <div className="mt-4 overflow-hidden rounded-xl border border-slate-200">
+                <div className="border-b bg-slate-50 px-4 py-3">
+                  <p className="font-semibold">
+                    Seleccione el cliente
+                  </p>
+
+                  <p className="text-sm text-slate-500">
+                    Se encontraron{" "}
+                    {resultadosClientes.length} resultado(s).
+                  </p>
+                </div>
+
+                <div className="divide-y">
+                  {resultadosClientes.map(
+                    (cliente) => (
+                      <button
+                        key={cliente.id_cliente}
+                        type="button"
+                        disabled={guardando}
+                        onClick={() =>
+                          seleccionarCliente(
+                            cliente,
+                          )
+                        }
+                        className="flex w-full flex-col gap-2 px-4 py-3 text-left transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60 md:flex-row md:items-center md:justify-between"
+                      >
+                        <div>
+                          <p className="font-bold text-slate-800">
+                            {cliente.cliente}
+                          </p>
+
+                          <p className="text-sm text-slate-500">
+                            Código:{" "}
+                            {cliente.codigo_cliente}
+                          </p>
+                        </div>
+
+                        <div className="text-sm md:text-right">
+                          <p>
+                            DPI:{" "}
+                            {cliente.dpi || "-"}
+                          </p>
+
+                          <p>
+                            NIT:{" "}
+                            {cliente.nit || "C/F"}
+                          </p>
+                        </div>
+                      </button>
+                    ),
+                  )}
+                </div>
+              </div>
+            )}
+
+            {busquedaClienteRealizada &&
+              resultadosClientes.length === 0 &&
+              !clienteSeleccionado && (
+                <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                  <p className="font-semibold text-amber-700">
+                    No se encontró el cliente
+                  </p>
+
+                  <p className="mt-1 text-sm text-amber-600">
+                    Verifica el DPI o NIT ingresado.
+                    También puedes buscar por código de
+                    cliente.
+                  </p>
+                </div>
+              )}
+
+            {clienteSeleccionado && (
+              <div className="mt-4 rounded-xl border border-green-200 bg-green-50 p-4">
+                <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-green-700">
+                      Cliente seleccionado
+                    </p>
+
+                    <p className="mt-1 text-lg font-bold text-slate-900">
+                      {clienteSeleccionado.cliente}
+                    </p>
+
+                    <div className="mt-3 grid grid-cols-1 gap-x-8 gap-y-1 text-sm text-slate-700 sm:grid-cols-2">
+                      <p>
+                        <span className="font-semibold">
+                          Código:
+                        </span>{" "}
+                        {
+                          clienteSeleccionado.codigo_cliente
+                        }
+                      </p>
+
+                      <p>
+                        <span className="font-semibold">
+                          Teléfono:
+                        </span>{" "}
+                        {
+                          clienteSeleccionado.telefono ||
+                          "-"
+                        }
+                      </p>
+
+                      <p>
+                        <span className="font-semibold">
+                          DPI:
+                        </span>{" "}
+                        {clienteSeleccionado.dpi || "-"}
+                      </p>
+
+                      <p>
+                        <span className="font-semibold">
+                          NIT:
+                        </span>{" "}
+                        {
+                          clienteSeleccionado.nit ||
+                          "C/F"
+                        }
+                      </p>
+
+                      <p>
+                        <span className="font-semibold">
+                          Tipo:
+                        </span>{" "}
+                        {
+                          clienteSeleccionado.tipo_cliente
+                        }
+                      </p>
+
+                      <p>
+                        <span className="font-semibold">
+                          Descuento:
+                        </span>{" "}
+                        {
+                          clienteSeleccionado.porcentaje_descuento
+                        }
+                        %
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={guardando}
+                    onClick={limpiarCliente}
+                    className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Cambiar cliente
+                  </button>
+                </div>
+              </div>
+            )}
           </Card>
 
           <Card className="mb-6">
@@ -1036,6 +1406,17 @@ export default function Ventas() {
                 </span>
               </div>
 
+              <div className="flex justify-between gap-4">
+                <span className="text-slate-500">
+                  Cliente
+                </span>
+
+                <span className="text-right font-semibold">
+                  {clienteSeleccionado?.cliente ||
+                    "Sin seleccionar"}
+                </span>
+              </div>
+
               <hr />
 
               <div className="flex justify-between">
@@ -1155,85 +1536,131 @@ export default function Ventas() {
         </div>
       </div>
 
-      <div className="mt-8">
-        <TituloPagina
-          titulo="Ventas recientes"
-          descripcion="Historial de ventas registradas en la sucursal."
-        />
+      <Card className="mt-8">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h2 className="text-xl font-bold">
+              Ventas recientes
+            </h2>
 
-        <Tabla<VentaListado>
-          datos={ventas}
-          mensajeVacio="No hay ventas registradas"
-          columnas={[
-            {
-              titulo: "Código",
-              render: (venta) =>
-                venta.codigo_venta,
-            },
-            {
-              titulo: "Fecha",
-              render: (venta) =>
-                new Date(
-                  venta.fecha,
-                ).toLocaleString(),
-            },
-            {
-              titulo: "Cliente",
-              render: (venta) =>
-                venta.cliente,
-            },
-            {
-              titulo: "Total",
-              render: (venta) =>
-                `Q${Number(
-                  venta.total,
-                ).toFixed(2)}`,
-            },
-            {
-              titulo: "Vendedor",
-              render: (venta) =>
-                venta.usuario,
-            },
-            {
-              titulo: "Estado",
-              render: (venta) =>
-                venta.codigo_estado ===
-                "PAGADA" ? (
-                  <Badge
-                    texto={venta.estado}
-                    tipo="verde"
-                  />
-                ) : (
-                  <Badge
-                    texto={venta.estado}
-                    tipo="amarillo"
-                  />
-                ),
-            },
-            {
-              titulo: "Comprobante",
-              render: (venta) => (
-                <button
-                  type="button"
-                  disabled={
-                    abriendoRecibo ===
-                    venta.id_venta
-                  }
-                  onClick={() =>
-                    abrirReciboVenta(venta)
-                  }
-                  className="font-semibold text-blue-600 hover:underline disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {abriendoRecibo ===
-                  venta.id_venta
-                    ? "Abriendo..."
-                    : "Ver recibo"}
-                </button>
-              ),
-            },
-          ]}
-        />
-      </div>
+            <p className="mt-1 text-sm text-slate-500">
+              El historial se carga únicamente cuando
+              lo solicitas.
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-2 sm:flex-row">
+            {mostrarVentasRecientes && (
+              <BotonSecundario
+                type="button"
+                disabled={cargandoVentas}
+                onClick={
+                  actualizarVentasRecientes
+                }
+              >
+                {cargandoVentas
+                  ? "Actualizando..."
+                  : "Actualizar"}
+              </BotonSecundario>
+            )}
+
+            <BotonPrimario
+              type="button"
+              disabled={cargandoVentas}
+              onClick={alternarVentasRecientes}
+            >
+              {cargandoVentas
+                ? "Cargando..."
+                : mostrarVentasRecientes
+                  ? "Ocultar ventas"
+                  : "Ver ventas recientes"}
+            </BotonPrimario>
+          </div>
+        </div>
+
+        {mostrarVentasRecientes && (
+          <div className="mt-6">
+            {cargandoVentas ? (
+              <Loader texto="Cargando ventas recientes..." />
+            ) : (
+              <Tabla<VentaListado>
+                datos={ventas}
+                mensajeVacio="No hay ventas registradas"
+                columnas={[
+                  {
+                    titulo: "Código",
+                    render: (venta) =>
+                      venta.codigo_venta,
+                  },
+                  {
+                    titulo: "Fecha",
+                    render: (venta) =>
+                      new Date(
+                        venta.fecha,
+                      ).toLocaleString(),
+                  },
+                  {
+                    titulo: "Cliente",
+                    render: (venta) =>
+                      venta.cliente,
+                  },
+                  {
+                    titulo: "Total",
+                    render: (venta) =>
+                      `Q${Number(
+                        venta.total,
+                      ).toFixed(2)}`,
+                  },
+                  {
+                    titulo: "Vendedor",
+                    render: (venta) =>
+                      venta.usuario,
+                  },
+                  {
+                    titulo: "Estado",
+                    render: (venta) =>
+                      venta.codigo_estado ===
+                      "PAGADA" ? (
+                        <Badge
+                          texto={venta.estado}
+                          tipo="verde"
+                        />
+                      ) : (
+                        <Badge
+                          texto={venta.estado}
+                          tipo="amarillo"
+                        />
+                      ),
+                  },
+                  {
+                    titulo: "Comprobante",
+                    render: (venta) => (
+                      <button
+                        type="button"
+                        disabled={
+                          abriendoRecibo ===
+                          venta.id_venta
+                        }
+                        onClick={() =>
+                          abrirReciboVenta(
+                            venta,
+                          )
+                        }
+                        className="font-semibold text-blue-600 hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {abriendoRecibo ===
+                        venta.id_venta
+                          ? "Abriendo..."
+                          : "Ver recibo"}
+                      </button>
+                    ),
+                  },
+                ]}
+              />
+            )}
+          </div>
+        )}
+      </Card>
 
       <ModalVentaExitosa
         abierto={

@@ -35,9 +35,30 @@ export class VentasController {
 
   @Get('catalogos')
   @Permiso('ventas.ver')
-  catalogos(@Req() request: RequestConUsuario) {
+  catalogos(
+    @Req() request: RequestConUsuario,
+  ) {
     return this.ventasService.catalogos(
       Number(request.user.sub),
+    );
+  }
+
+  /*
+   * Debe declararse antes de @Get(':id').
+   *
+   * Ejemplos:
+   * GET /ventas/clientes/buscar?valor=281539065
+   * GET /ventas/clientes/buscar?valor=1234567890101
+   */
+  @Get('clientes/buscar')
+  @Permiso('ventas.ver')
+  buscarClientes(
+    @Req() request: RequestConUsuario,
+    @Query('valor') valor?: string,
+  ) {
+    return this.ventasService.buscarClientes(
+      Number(request.user.sub),
+      valor,
     );
   }
 

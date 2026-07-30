@@ -165,31 +165,6 @@ export class VentasService {
       turno = null;
     }
 
-    const clientes: any[] =
-      await this.prisma.$queryRaw`
-        SELECT
-          c.id_cliente,
-          c.codigo_cliente,
-          TRIM(
-            CONCAT(
-              c.nombres,
-              ' ',
-              COALESCE(c.apellidos, '')
-            )
-          ) AS cliente,
-          c.nit,
-          c.telefono,
-          tc.nombre AS tipo_cliente,
-          tc.porcentaje_descuento
-        FROM clientes c
-        INNER JOIN tipos_cliente tc
-          ON tc.id_tipo_cliente =
-             c.id_tipo_cliente
-        WHERE c.estado = 1
-          AND tc.estado = 1
-        ORDER BY c.nombres, c.apellidos
-      `;
-
     const productos: any[] =
       await this.prisma.$queryRaw`
         SELECT
@@ -249,18 +224,6 @@ export class VentasService {
       },
 
       turno,
-
-      clientes: clientes.map((cliente) => ({
-        id_cliente: Number(cliente.id_cliente),
-        codigo_cliente: cliente.codigo_cliente,
-        cliente: cliente.cliente,
-        nit: cliente.nit,
-        telefono: cliente.telefono,
-        tipo_cliente: cliente.tipo_cliente,
-        porcentaje_descuento: Number(
-          cliente.porcentaje_descuento,
-        ),
-      })),
 
       productos: productos.map((producto) => ({
         id_variante: Number(producto.id_variante),
@@ -859,6 +822,136 @@ export class VentasService {
 
       this.manejarErrorVenta(error);
     }
+  }
+
+
+  /**
+   * Busca clientes bajo demanda por DPI, NIT o código.
+   * Evita cargar la lista completa de clientes en catalogos().
+   */
+  async buscarClientes(
+    idUsuario: number,
+    valor?: string,
+  ) {
+    /*
+     * Valida que el usuario autenticado tenga una
+     * sucursal activa asignada.
+     */
+    await this.obtenerDatosUsuario(idUsuario);
+
+    const busqueda = valor?.trim();
+
+    if (!busqueda || busqueda.length < 3) {
+      throw new BadRequestException(
+        'Ingrese al menos 3 caracteres del DPI, NIT o código del cliente',
+      );
+    }
+
+    /*
+     * Permite buscar DPI y NIT aunque se escriban
+     * con espacios o guiones.
+     */
+    const busquedaNormalizada =
+      busqueda.replace(/[\s-]/g, '');
+
+    const patronTexto = `%${busqueda}%`;
+    const patronNormalizado =
+      `%${busquedaNormalizada}%`;
+
+    const clientes: any[] =
+      await this.prisma.$queryRaw`
+        SELECT
+          c.id_cliente,
+          c.codigo_cliente,
+          TRIM(
+            CONCAT(
+              c.nombres,
+              ' ',
+              COALESCE(c.apellidos, '')
+            )
+          ) AS cliente,
+          c.nit,
+          c.dpi,
+          c.telefono,
+          c.direccion,
+          tc.nombre AS tipo_cliente,
+          tc.porcentaje_descuento
+        FROM clientes c
+        INNER JOIN tipos_cliente tc
+          ON tc.id_tipo_cliente =
+             c.id_tipo_cliente
+        WHERE c.estado = 1
+          AND tc.estado = 1
+          AND (
+            c.codigo_cliente LIKE ${patronTexto}
+
+            OR REPLACE(
+                 REPLACE(
+                   COALESCE(c.nit, ''),
+                   '-',
+                   ''
+                 ),
+                 ' ',
+                 ''
+               ) LIKE ${patronNormalizado}
+
+            OR REPLACE(
+                 REPLACE(
+                   COALESCE(c.dpi, ''),
+                   '-',
+                   ''
+                 ),
+                 ' ',
+                 ''
+               ) LIKE ${patronNormalizado}
+          )
+        ORDER BY
+          CASE
+            WHEN REPLACE(
+                   REPLACE(
+                     COALESCE(c.dpi, ''),
+                     '-',
+                     ''
+                   ),
+                   ' ',
+                   ''
+                 ) = ${busquedaNormalizada}
+              THEN 1
+
+            WHEN REPLACE(
+                   REPLACE(
+                     COALESCE(c.nit, ''),
+                     '-',
+                     ''
+                   ),
+                   ' ',
+                   ''
+                 ) = ${busquedaNormalizada}
+              THEN 2
+
+            WHEN c.codigo_cliente = ${busqueda}
+              THEN 3
+
+            ELSE 4
+          END,
+          c.nombres,
+          c.apellidos
+        LIMIT 10
+      `;
+
+    return clientes.map((cliente) => ({
+      id_cliente: Number(cliente.id_cliente),
+      codigo_cliente: cliente.codigo_cliente,
+      cliente: cliente.cliente,
+      nit: cliente.nit,
+      dpi: cliente.dpi,
+      telefono: cliente.telefono,
+      direccion: cliente.direccion,
+      tipo_cliente: cliente.tipo_cliente,
+      porcentaje_descuento: Number(
+        cliente.porcentaje_descuento,
+      ),
+    }));
   }
 
   private manejarErrorVenta(
