@@ -76,42 +76,87 @@ export class VentasService {
   }
 
   private async obtenerTurnoActivo(
-    idUsuario: number,
-  ) {
-    const turnos: TurnoDb[] =
-      await this.prisma.$queryRaw`
-        SELECT
-          ct.id_turno,
-          ct.id_caja,
-          c.codigo_caja,
-          c.nombre AS caja
-        FROM caja_turnos ct
-        INNER JOIN cajas c
-          ON c.id_caja = ct.id_caja
-        INNER JOIN estados_sistema es
-          ON es.id_estado = ct.id_estado
-        WHERE ct.id_usuario = ${idUsuario}
-          AND ct.fecha_cierre IS NULL
-          AND es.modulo = 'CAJA'
-          AND es.codigo = 'ABIERTA'
-          AND c.estado = 1
-        ORDER BY ct.fecha_apertura DESC
-        LIMIT 1
-      `;
+  idUsuario: number,
+) {
+  const turnos: any[] =
+    await this.prisma.$queryRaw`
+      SELECT
+        ct.id_turno,
+        ct.id_caja,
+        ct.fecha_apertura,
+        ct.monto_inicial,
+        ct.monto_esperado,
 
-    if (turnos.length === 0) {
-      throw new BadRequestException(
-        'No tienes una caja abierta. Debes abrir caja antes de vender',
-      );
-    }
+        c.codigo_caja,
+        c.nombre AS caja,
 
-    return {
-      id_turno: Number(turnos[0].id_turno),
-      id_caja: Number(turnos[0].id_caja),
-      codigo_caja: turnos[0].codigo_caja,
-      caja: turnos[0].caja,
-    };
+        c.id_sucursal,
+        s.nombre AS sucursal
+
+      FROM caja_turnos ct
+
+      INNER JOIN cajas c
+        ON c.id_caja = ct.id_caja
+
+      INNER JOIN estados_sistema ec
+        ON ec.id_estado = ct.id_estado
+
+      INNER JOIN usuarios u
+        ON u.id_usuario = ct.id_usuario
+
+      INNER JOIN empleados e
+        ON e.id_empleado = u.id_empleado
+
+      INNER JOIN sucursales s
+        ON s.id_sucursal = c.id_sucursal
+
+      WHERE ct.id_usuario = ${idUsuario}
+        AND ct.fecha_cierre IS NULL
+
+        AND ec.modulo = 'CAJA'
+        AND ec.codigo = 'ABIERTA'
+        AND ec.estado = 1
+
+        AND c.id_sucursal = e.id_sucursal
+
+        AND c.estado = 1
+        AND s.estado = 1
+        AND u.estado = 1
+        AND e.estado = 1
+
+      ORDER BY
+        ct.fecha_apertura DESC,
+        ct.id_turno DESC
+
+      LIMIT 1
+    `;
+
+  if (turnos.length === 0) {
+    return null;
   }
+
+  const turno = turnos[0];
+
+  return {
+    id_turno: Number(turno.id_turno),
+    id_caja: Number(turno.id_caja),
+    codigo_caja: turno.codigo_caja,
+    caja: turno.caja,
+    id_sucursal: Number(
+      turno.id_sucursal,
+    ),
+    sucursal: turno.sucursal,
+    fecha_apertura:
+      turno.fecha_apertura,
+    monto_inicial: Number(
+      turno.monto_inicial,
+    ),
+    monto_esperado: Number(
+      turno.monto_esperado,
+    ),
+  };
+}
+
 
   private async buscarVentaPorToken(
     tokenOperacion: string,
@@ -151,19 +196,10 @@ export class VentasService {
     const usuario =
       await this.obtenerDatosUsuario(idUsuario);
 
-    let turno: {
-      id_turno: number;
-      id_caja: number;
-      codigo_caja: string;
-      caja: string;
-    } | null = null;
-
-    try {
-      turno =
-        await this.obtenerTurnoActivo(idUsuario);
-    } catch {
-      turno = null;
-    }
+    const turno =
+  await this.obtenerTurnoActivo(
+    idUsuario,
+  );
 
     const productos: any[] =
       await this.prisma.$queryRaw`
@@ -594,11 +630,17 @@ export class VentasService {
       };
     }
 
-    const usuario =
-      await this.obtenerDatosUsuario(idUsuario);
+   const usuario =
+  await this.obtenerDatosUsuario(idUsuario);
 
-    const turno =
-      await this.obtenerTurnoActivo(idUsuario);
+const turno =
+  await this.obtenerTurnoActivo(idUsuario);
+
+if (!turno) {
+  throw new BadRequestException(
+    'Debes abrir una caja antes de registrar una venta',
+  );
+}
 
     const clientes: any[] =
       await this.prisma.$queryRaw`
